@@ -22,11 +22,11 @@ target_compile_options(runtime INTERFACE -msimd128 -mnontrapping-fptoint -fwasm-
 target_link_options(runtime INTERFACE -fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=0 -sSTACK_SIZE=4MB
     -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=128MB -sMAXIMUM_MEMORY=2GB -sFORCE_FILESYSTEM=1
     -sFULL_ES3=1 -sMAX_WEBGL_VERSION=2 -sMIN_WEBGL_VERSION=1 -O1)
-target_link_libraries(runtime INTERFACE "${DASSDL3_BUILD}/lib/liblibDaScript.a"
+target_link_libraries(runtime INTERFACE
     "${DASSDL3_BUILD}/lib/liblibDaScript_runtime.a" "${DASSDL3_BUILD}/lib/liblibUriParser.a"
     "${DASSDL3_BUILD}/_deps/sdl3-build/libSDL3.a")
 add_library(web_binding STATIC "${DASSDL3_ROOT}/web/module_web.cpp")
-target_link_libraries(web_binding PUBLIC runtime)
+target_link_libraries(web_binding PUBLIC "${DASSDL3_BUILD}/lib/liblibDaScript.a" runtime)
 
 set(core_scripts state mapper apu core cpu ppu pacing web_main)
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/app")
@@ -40,32 +40,33 @@ set(preload
     "SHELL:--exclude-file */_llvm_aot_generated/*"
     "SHELL:--preload-file ${DASSDL3_ROOT}/dassdl3@/dassdl3"
     "SHELL:--preload-file ${CMAKE_BINARY_DIR}/app@/app")
-add_executable(generate_web_aot generate_aot.cpp)
+add_executable(generate_web_aot "${APP}/native/standalone_generate.cpp")
 target_link_libraries(generate_web_aot PRIVATE web_binding)
 target_link_options(generate_web_aot PRIVATE ${preload} -lnodefs.js -sENVIRONMENT=node)
 set_target_properties(generate_web_aot PROPERTIES SUFFIX ".js")
-set(aot_outputs)
-foreach(name IN LISTS core_scripts)
-    list(APPEND aot_outputs "${CMAKE_BINARY_DIR}/aot/${name}.cpp")
-endforeach()
-foreach(i RANGE 0 4)
-    list(APPEND aot_outputs "${CMAKE_BINARY_DIR}/aot/shared${i}.cpp")
-endforeach()
+set(aot_outputs "${CMAKE_BINARY_DIR}/aot/nes.das.cpp" "${CMAKE_BINARY_DIR}/aot/nes.das.h")
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/aot")
 file(GLOB_RECURSE boost_scripts "${DASSDL3_ROOT}/dassdl3/*.das" "${DAS}/daslib/*.das")
 file(GLOB app_scripts "${APP}/*.das")
 set_property(TARGET generate_web_aot APPEND PROPERTY LINK_DEPENDS ${app_scripts} ${boost_scripts})
 add_custom_command(OUTPUT ${aot_outputs}
     COMMAND "${NODE_EXECUTABLE}" "$<TARGET_FILE:generate_web_aot>" "${APP}" "${CMAKE_BINARY_DIR}/aot"
-    DEPENDS generate_web_aot ${app_scripts} ${boost_scripts} VERBATIM)
+    DEPENDS generate_web_aot "${APP}/native/standalone.das" ${app_scripts} ${boost_scripts} VERBATIM)
 add_executable(dasnes_web runner.cpp ${aot_outputs})
-target_link_libraries(dasnes_web PRIVATE web_binding)
-target_link_options(dasnes_web PRIVATE ${preload}
+target_link_libraries(dasnes_web PRIVATE runtime)
+target_include_directories(dasnes_web PRIVATE "${CMAKE_BINARY_DIR}/aot")
+target_link_options(dasnes_web PRIVATE
+    "-Wl,-Map,${CMAKE_BINARY_DIR}/dasnes_web.map"
     "SHELL:--preload-file ${APP}/demo.nes@/demo.nes"
     -sMODULARIZE=1 -sEXPORT_NAME=createDasNES -sINVOKE_RUN=0 -sEXIT_RUNTIME=0
     "-sEXPORTED_FUNCTIONS=['_main','_web_stop','_web_pause']"
     "-sEXPORTED_RUNTIME_METHODS=['callMain','FS','ENV']")
 set_target_properties(dasnes_web PROPERTIES SUFFIX ".js" RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/site")
+set_property(TARGET dasnes_web APPEND PROPERTY LINK_DEPENDS
+    "${APP}/native/check_standalone.cmake" "${APP}/demo.nes")
+add_custom_command(TARGET dasnes_web POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" "-DMAP_FILE=${CMAKE_BINARY_DIR}/dasnes_web.map"
+        -P "${APP}/native/check_standalone.cmake" VERBATIM)
 if(CMAKE_HOST_WIN32)
     foreach(target generate_web_aot dasnes_web)
         add_custom_command(TARGET ${target} POST_BUILD COMMAND icacls "$<TARGET_FILE:${target}>" /reset VERBATIM)

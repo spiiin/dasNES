@@ -24,19 +24,20 @@ target_compile_definitions(runtime INTERFACE DAS_ENABLE_EXCEPTIONS=1 DAS_ENABLE_
     DASNES_SDL_ROOT="${DASSDL3_ROOT}")
 target_compile_options(runtime INTERFACE /bigobj)
 target_link_libraries(runtime INTERFACE
-    "${DAS_ROOT}/lib/libDaScript.lib" "${DAS_ROOT}/lib/libDaScript_runtime.lib"
+    "${DAS_ROOT}/lib/libDaScript_runtime.lib"
     "${DAS_ROOT}/lib/libUriParser.lib" "${DASSDL3_BUILD}/_deps/sdl3-build/SDL3-static.lib"
     dbghelp ws2_32 mswsock rpcrt4 kernel32 user32 gdi32 winmm imm32 ole32 oleaut32
     version uuid advapi32 setupapi shell32 dinput8 winspool comdlg32)
 # Build the binding registration with AOT headers enabled; leave dasSDL3's own build untouched.
 add_library(sdl_binding STATIC "${DASSDL3_ROOT}/src/module_sdl3.cpp")
-target_link_libraries(sdl_binding PUBLIC runtime)
+target_link_libraries(sdl_binding PUBLIC "${DAS_ROOT}/lib/libDaScript.lib" runtime)
 target_compile_definitions(sdl_binding PRIVATE DASSDL3_AOT_HEADER="sdl3_aot.h"
     DASSDL3_TYPES_INCLUDE="generated/clangbind/sdl3_types.inc"
     DASSDL3_REGISTRATION_INCLUDE="generated/clangbind/sdl3_functions.inc")
 add_executable(dasnes_aot_generator native/aot.cpp)
 target_link_libraries(dasnes_aot_generator PRIVATE sdl_binding)
-add_executable(dasNES native/host.cpp)
+add_executable(dasNES native/host.cpp "${DAS_ROOT}/modules/dasLLVM/src/dasLLVM.cpp")
+target_compile_definitions(dasNES PRIVATE DASNES_JIT_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/build/jit")
 target_link_libraries(dasNES PRIVATE sdl_binding)
 file(GLOB local_scripts CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.das")
 file(GLOB_RECURSE library_scripts CONFIGURE_DEPENDS "${DASSDL3_ROOT}/dassdl3/*.das" "${DAS_ROOT}/daslib/*.das")
@@ -59,3 +60,29 @@ foreach(input IN LISTS aot_inputs)
         DEPENDS dasnes_aot_generator "${input}" ${local_scripts} ${library_scripts} VERBATIM)
     target_sources(dasNES PRIVATE "${output}")
 endforeach()
+
+# Distribution build: compiler and binding registrations exist only in the generator.
+add_executable(dasnes_standalone_generator EXCLUDE_FROM_ALL native/standalone_generate.cpp)
+target_link_libraries(dasnes_standalone_generator PRIVATE sdl_binding)
+target_compile_options(dasnes_standalone_generator PRIVATE /EHsc)
+set(standalone_dir "${CMAKE_CURRENT_BINARY_DIR}/standalone")
+file(MAKE_DIRECTORY "${standalone_dir}")
+add_custom_command(OUTPUT "${standalone_dir}/nes.das.cpp" "${standalone_dir}/nes.das.h"
+    COMMAND dasnes_standalone_generator "${CMAKE_CURRENT_SOURCE_DIR}/main.das"
+        "${standalone_dir}" "${CMAKE_CURRENT_SOURCE_DIR}/native/standalone.das"
+    DEPENDS dasnes_standalone_generator native/standalone.das ${local_scripts} ${library_scripts} VERBATIM)
+add_executable(dasNES_standalone EXCLUDE_FROM_ALL native/standalone_host.cpp "${standalone_dir}/nes.das.cpp")
+target_include_directories(dasNES_standalone PRIVATE "${standalone_dir}")
+target_link_libraries(dasNES_standalone PRIVATE runtime)
+# The generator limits optimization only for the CPU decoder on MSVC.
+# The generated Nes initializer needs >1 MB of native stack.
+target_compile_options(dasNES_standalone PRIVATE /EHsc /Gy /Gw)
+target_link_options(dasNES_standalone PRIVATE /OPT:REF /OPT:ICF /STACK:16777216
+    "/MAP:${standalone_dir}/dasNES_standalone.map")
+set_property(TARGET dasNES_standalone APPEND PROPERTY LINK_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/native/check_standalone.cmake" "${CMAKE_CURRENT_SOURCE_DIR}/demo.nes")
+add_custom_command(TARGET dasNES_standalone POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" "-DMAP_FILE=${standalone_dir}/dasNES_standalone.map"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/native/check_standalone.cmake"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/demo.nes" "$<TARGET_FILE_DIR:dasNES_standalone>/demo.nes"
+    VERBATIM)

@@ -2,9 +2,13 @@ param(
     [string]$DasSDL3 = (Join-Path $PSScriptRoot '..\dasSDL3'),
     [string]$DependencyBuild = '',
     [string]$VsDevCmd = '',
-    [int]$Jobs = 4
+    [int]$Jobs = 4,
+    [switch]$Standalone,
+    [switch]$Jit
 )
 $ErrorActionPreference = 'Stop'
+if ($Standalone -and $Jit) { throw 'Standalone does not include JIT' }
+if ($Jit) { & (Join-Path $PSScriptRoot 'tools\install-jit.ps1') }
 $DasSDL3 = (Get-Item -LiteralPath $DasSDL3 -ErrorAction Stop).FullName
 if (!$DependencyBuild) { $DependencyBuild = Join-Path $DasSDL3 'build\ninja' }
 $cache = Get-Content -LiteralPath (Join-Path $DependencyBuild 'CMakeCache.txt')
@@ -35,7 +39,9 @@ try {
     $buildDir = Join-Path $PSScriptRoot 'build\aot'
     cmake -S $PSScriptRoot -B $buildDir -G Ninja -DCMAKE_BUILD_TYPE=Release "-DDASSDL3_ROOT=$DasSDL3" "-DDASSDL3_BUILD=$DependencyBuild" "-DCMAKE_MAKE_PROGRAM=$ninja"
     if ($LASTEXITCODE -ne 0) { throw 'CMake configuration failed' }
-    cmake --build $buildDir --parallel $Jobs
+    $buildArgs = @('--build', $buildDir, '--parallel', $Jobs)
+    if ($Standalone) { $buildArgs += @('--target', 'dasNES_standalone') }
+    cmake @buildArgs
     if ($LASTEXITCODE -ne 0) { throw 'AOT build failed' }
 } finally {
     foreach ($key in $oldEnvironment.Keys) { [Environment]::SetEnvironmentVariable($key, $oldEnvironment[$key], 'Process') }

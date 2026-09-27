@@ -29,7 +29,8 @@ def open_game(browser, rom=None):
         page.wait_for_function("document.querySelector('#status').textContent === 'ROM готов'")
     page.locator('#start').click()
     wait_frames(page, 120)
-    assert 'wasm32 AOT, interpreter fallback disabled' in log(page), log(page)
+    assert 'wasm32 AOT, interpreter fallback disabled; standalone, no compiler' in log(page), log(page)
+    assert page.evaluate("['/app', '/daslib', '/dassdl3'].every(p => !runtime.FS.analyzePath(p).exists)")
     return page
 
 with sync_playwright() as pw:

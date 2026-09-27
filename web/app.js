@@ -42,7 +42,7 @@ function start() {
   $('start').disabled = true; $('rom').disabled = true; $('zapper').disabled = true; $('pause').disabled = false;
   $('stop').disabled = false; $('restart').disabled = false; $('sound').disabled = false;
   $('status').textContent = 'Игра'; $('canvas').focus();
-  try { runtime.callMain(['/app/web_main.das']); }
+  try { runtime.callMain([]); }
   catch (error) { if (error !== 'unwind') failed(error); }
   updateAudio();
 }

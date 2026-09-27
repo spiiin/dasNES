@@ -63,6 +63,58 @@ cd dasNES
 
 Для игры рекомендуется AOT-сборка. Параметр `-Interpreter` запускает интерпретатор, который может быть слишком медленным для реального времени. Если AOT ещё не собран, launcher использует доступный интерпретатор с предупреждением.
 
+### Интерпретатор с JIT
+
+```powershell
+.\build.ps1 -Jit                    # один раз: установить LLVM и собрать launcher
+.\run.ps1 -Interpreter -Jit -Rom 'C:\roms\game.nes'
+.\benchmark.ps1 -Jit -Rom 'C:\roms\game.nes'
+.\benchmark.ps1 -Jit -Profile -Rom 'C:\roms\game.nes'
+```
+
+`-Jit` сам включает режим интерпретатора; `-Interpreter` можно опустить.
+В этом режиме используется `build/aot/dasNES.exe`, который загружает `.das` и
+компилирует функции через LLVM JIT. В журнале появляются `LLVM JIT: ... functions`
+и `dasNES: LLVM JIT (in memory)`. При отсутствии JIT entry point запуск завершается
+ошибкой, без незаметного перехода на обычный интерпретатор.
+
+`build.ps1 -Jit` скачивает закреплённый LLVM 22.1.5, проверяет SHA256 архива и
+помещает `LLVM.dll` (~54 MB) в `build/jit`. При повторной сборке скачивание не нужно.
+Используется JIT в памяти, без DLL-кэша: компиляция добавляет задержку при каждом
+запуске, но не требует пересобирать EXE после правок `.das`.
+Без `-Jit` поведение прежнее. JIT доступен только для Windows launcher и несовместим
+с `-Standalone`; компактные Windows/Web-сборки не включают LLVM.
+
+### Компактная standalone-сборка
+
+```powershell
+.\build.ps1 -Standalone
+.\run.ps1 -Standalone -Rom 'C:\roms\Super Mario Bros. (W) [!].nes'
+```
+
+Результат — `build/aot/dasNES_standalone.exe`. Его можно перенести в отдельную
+папку и запускать без исходников `.das`, dasSDL3 runner и checkout daScript:
+
+```powershell
+.\dasNES_standalone.exe --rom 'C:\roms\game.nes'
+```
+
+Без `--rom` запускается `demo.nes` рядом с EXE; сборка копирует его автоматически.
+Поддерживаются `--mute`, `--zapper`, `--smoke-test` и переменные окружения
+`DASNES_ROM`, `DASNES_MUTE`, `DASNES_ZAPPER`. Для Duck Hunt при прямом запуске
+EXE передайте `--zapper`; `run.ps1` определяет его по имени ROM.
+Как и обычная MSVC-сборка, EXE требует Microsoft Visual C++ Runtime x64.
+
+Компилятор daScript нужен **только при сборке**. Генератор создаёт C++ standalone-
+контекст и линкует его с SDL3 и `libDaScript_runtime`; runtime для строк, массивов,
+контекста и AOT-вызовов остаётся. Парсер, компилятор, регистрации модулей и тестовые
+скрипты в этот EXE не входят. Сборка автоматически проверяет linker map.
+На проверенной Release x64 конфигурации: **31,56 → 4,81 MB** (−85%).
+
+Обычные `build.ps1`, `run.ps1 -Interpreter`, тесты и профилирование продолжают
+использовать сборку для разработки. Standalone не загружает произвольные `.das`:
+после изменения исходников его нужно пересобрать.
+
 ## Веб-версия
 
 Нужны **Emscripten 5.0.3**, CMake, Ninja, Python и заранее собранный Web-профиль dasSDL3. Подготовка зависимости описана в [dasSDL3 Web](https://github.com/spiiin/dasSDL3/blob/HEAD/web/README.md); необходимые функции обвязки перечислены в [документации веб-версии](web/README.md).

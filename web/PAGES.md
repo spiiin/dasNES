@@ -52,7 +52,7 @@ Pause/Resume и Stop/Restart по адресу с префиксом `/dasNES/`.
 
 `tools/package_pages.py` копирует только HTML, CSS, два JS-файла, WASM и data
 в `build/pages`, добавляет `.nojekyll`. Каталог назначения должен быть пустым.
-В data CMake упаковывает ядро, библиотеки daScript и наше `demo.nes`.
+В data CMake упаковывает только наше `demo.nes`; ядро встроено в standalone WASM.
 Коммерческие ROM в artifact не входят. Выбранный пользователем ROM читается
 в память браузера и не отправляется на сервер.
 
@@ -69,7 +69,7 @@ python -m http.server 8080 --bind 127.0.0.1 --directory build/pages
 Сайт использует относительные URL, поэтому работает и в корне, и в `/dasNES/`.
 Для запуска нужны HTTP(S), WebAssembly SIMD, WebAssembly exceptions и WebGL.
 SharedArrayBuffer, COOP/COEP и специальный backend не требуются.
-Размер текущего пакета около 34 MB без сжатия; первая загрузка зависит от сети.
+Размер текущего standalone-пакета около 2,77 MB без сжатия; первая загрузка зависит от сети.
 
 Документация: [GitHub Pages custom workflows](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages),
 [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html).
