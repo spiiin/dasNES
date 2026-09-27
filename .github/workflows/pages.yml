@@ -24,6 +24,9 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: spiiin/dasSDL3
+          # GITHUB_TOKEN cannot read another private repository.
+          token: ${{ secrets.DASSDL3_READ_TOKEN || github.token }}
+          persist-credentials: false
           ref: 2c559dc0b9127415599640ef2c5b3ccbb498225a
           submodules: recursive
           path: build/deps/dasSDL3

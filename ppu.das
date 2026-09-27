@@ -21,7 +21,17 @@ def pattern(n : Nes; base, tile, x, y : int) : int {
 
 // Snapshot the live scroll address at the start of a scanline. The fetch
 // pipeline is approximated; t/v transfers and sprite-zero timing are scheduled.
+[unsafe_deref]
 def render_line(var n : Nes; y : int) {
+    // Validate once before the unchecked row stores. The array is not resized
+    // while these pointers are live; a row contains exactly 256 RGBA pixels.
+    verify(y >= 0 && y < 240 && length(n.pixels) >= 245760)
+    var row = unsafe(addr(n.pixels[y * 1024]))
+    verify((intptr(row) & 3ul) == 0ul)
+    var pixels = unsafe(reinterpret<uint?>(row))
+    var endian = 1u
+    var little_endian = false
+    unsafe { little_endian = *reinterpret<uint8?>(addr(endian)) == uint8(1) }
     n.render_v = n.v
     n.render_fine_x = n.fine_x
     n.sprite0_dot = -1
@@ -38,6 +48,7 @@ def render_line(var n : Nes; y : int) {
     // Decode each selected sprite row once. Reverse OAM order preserves the
     // first opaque sprite even when it is behind the background.
     var foreground : int[256]
+    var foreground_pixels = unsafe(addr(foreground[0]))
     if ((n.mask & 16) != 0) {
         for (i in 0 .. count) {
             let s = sprites[count - 1 - i]; let o = s * 4
@@ -55,7 +66,7 @@ def render_line(var n : Nes; y : int) {
                 if (x >= 256) { break }
                 let shift = (attr & 64) != 0 ? px : 7 - px
                 let fg = ((lo >> shift) & 1) | (((hi >> shift) & 1) << 1)
-                if (fg != 0) { foreground[x] = flags | fg }
+                if (fg != 0 && x >= 0) { unsafe { foreground_pixels[x] = flags | fg } }
             }
         }
     }
@@ -64,8 +75,10 @@ def render_line(var n : Nes; y : int) {
     for (i in 0 .. 32) {
         var index = ppu_read(n, 16128 + i)
         if ((n.mask & 1) != 0) { index &= 48 }
-        row_colors[i] = colors[index]
+        let rgb = colors[index]
+        row_colors[i] = little_endian ? (0xff000000u | ((rgb & 255u) << 16) | (rgb & 65280u) | (rgb >> 16)) : ((rgb << 8) | 255u)
     }
+    var packed_colors = unsafe(addr(row_colors[0]))
     let bg_start = (n.mask & 8) == 0 ? 256 : ((n.mask & 2) != 0 ? 0 : 8)
     let fg_start = (n.mask & 16) == 0 ? 256 : ((n.mask & 4) != 0 ? 0 : 8)
     let wx_start = n.render_fine_x + (n.render_v & 31) * 8
@@ -74,7 +87,6 @@ def render_line(var n : Nes; y : int) {
     let pattern_base = (n.ctrl & 16) != 0 ? 4096 : 0
     var last_tile = -1
     var lo = 0; var hi = 0; var palette_base = 0
-    var p = y * 1024
     for (x in 0 .. 256) {
         var bg = 0
         var palette = 0
@@ -97,19 +109,23 @@ def render_line(var n : Nes; y : int) {
             if (bg != 0) { palette = palette_base + bg }
         }
         if (x >= fg_start) {
-            let fg = foreground[x]
+            let fg = unsafe(foreground_pixels[x])
             if (fg != 0) {
                 if ((fg & 64) != 0 && bg != 0 && x < 255 && n.sprite0_dot < 0) { n.sprite0_dot = x + 1 }
                 if (bg == 0 || (fg & 32) == 0) { palette = fg & 31 }
             }
         }
-        let rgb = row_colors[palette]
-        n.pixels[p] = uint8((rgb >> 16) & 255u)
-        n.pixels[p + 1] = uint8((rgb >> 8) & 255u)
-        n.pixels[p + 2] = uint8(rgb & 255u)
-        n.pixels[p + 3] = uint8(255)
-        p += 4
-        if (n.zapper && abs(x - n.zapper_x) <= 4 && abs(y - n.zapper_y) <= 4 && int((rgb >> 16) & 255u) + int((rgb >> 8) & 255u) + int(rgb & 255u) > 500) { n.zapper_light_until = n.cycles + 2500l }
+        unsafe { pixels[x] = packed_colors[palette] }
+    }
+    // Zapper observes at most nine pixels of this row. Keep it outside the
+    // common pixel loop; all pixels here have the same emulated CPU timestamp.
+    if (n.zapper && abs(y - n.zapper_y) <= 4) {
+        for (x in max(0, n.zapper_x - 4) .. min(256, n.zapper_x + 5)) {
+            let p = x * 4
+            var brightness = 0
+            unsafe { brightness = int(row[p]) + int(row[p + 1]) + int(row[p + 2]) }
+            if (brightness > 500) { n.zapper_light_until = n.cycles + 2500l; break }
+        }
     }
 }
 

@@ -12,7 +12,30 @@
 Push в `main` собирает и публикует сайт. Pull request только собирает и проверяет.
 Адрес успешной публикации появляется в environment `github-pages` и выводе deploy.
 Настройки Pages, права Actions и ограничения environment должны разрешать deployment из `main`.
-Отдельные PAT, ветка `gh-pages`, домен и сервер не нужны: используется `GITHUB_TOKEN`.
+Для deploy используется `GITHUB_TOKEN`; ветка `gh-pages`, домен и сервер не нужны.
+
+## Доступ к приватному dasSDL3
+
+Обычный `GITHUB_TOKEN` действует только в dasNES и не может читать другой
+приватный репозиторий. Поэтому checkout dasSDL3 может завершиться сообщением
+`Repository not found`, даже если локальный Git успешно читает его.
+
+1. В GitHub **Settings → Developer settings → Personal access tokens →
+   Fine-grained tokens** создать токен с владельцем `spiiin`, доступом только
+   к `dasSDL3` и разрешением **Contents: Read-only**.
+2. В репозитории **dasNES → Settings → Secrets and variables → Actions →
+   New repository secret** сохранить его под именем `DASSDL3_READ_TOKEN`.
+3. Отправить обновлённый workflow в `main` и запустить новый **Run workflow**.
+   Перезапуск старого run использует старую версию workflow.
+
+Токен используется только для checkout зависимости и не сохраняется в Git config.
+Если dasSDL3 публичный, secret не нужен: workflow использует `github.token`.
+Токен с истёкшим сроком нужно обновить. Secrets недоступны для PR из fork и
+Dependabot, поэтому их сборка с приватной зависимостью не пройдёт; используйте
+доверенную ветку для проверки. Не переключайте workflow на `pull_request_target`
+для выполнения кода из PR.
+
+См. [checkout private repositories](https://github.com/actions/checkout#checkout-multiple-repos-private).
 
 ## Что собирается
 

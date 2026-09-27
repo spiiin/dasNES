@@ -77,7 +77,7 @@ def main(smoke : bool) : int {
     for (i in 0 .. 4096) { n.nt[i] = random_byte() }
     var expected : uint8[1024]
     for (test in 0 .. 2048) {
-        let y = random_byte() % 240
+        let y = test < 240 ? test : random_byte() % 240
         n.mapper = test % 4 == 3 ? 4 : test % 4
         n.chr_ram = (test & 4) != 0
         n.vertical = (test & 8) != 0
@@ -89,7 +89,8 @@ def main(smoke : bool) : int {
         n.fine_x = test & 7
         n.status = random_byte()
         n.zapper = (test & 1) != 0
-        n.zapper_x = random_byte(); n.zapper_y = y
+        n.zapper_x = (test & 3) == 0 ? -5 : ((test & 3) == 1 ? 260 : random_byte())
+        n.zapper_y = y + test % 11 - 5
         n.cycles = int64(test) * 100l; n.zapper_light_until = 0l
         for (i in 0 .. 32) { n.pal[i] = random_byte() & 63 }
         for (s in 0 .. 64) {
@@ -100,6 +101,9 @@ def main(smoke : bool) : int {
             n.oam[o + 3] = s < 4 ? test & 255 : random_byte()
         }
         let status = n.status
+        // Detect stores crossing either end of a row, including rows 0 and 239.
+        if (y > 0) { n.pixels[y * 1024 - 1] = uint8(123) }
+        if (y < 239) { n.pixels[(y + 1) * 1024] = uint8(123) }
         render_line_reference(n, y)
         let expected_status = n.status
         let expected_dot = n.sprite0_dot
@@ -107,6 +111,8 @@ def main(smoke : bool) : int {
         for (i in 0 .. 1024) { expected[i] = n.pixels[y * 1024 + i] }
         n.status = status; n.zapper_light_until = 0l
         render_line(n, y)
+        if (y > 0) { verify(n.pixels[y * 1024 - 1] == uint8(123)) }
+        if (y < 239) { verify(n.pixels[(y + 1) * 1024] == uint8(123)) }
         verify(n.status == expected_status && n.sprite0_dot == expected_dot && n.zapper_light_until == expected_light)
         for (i in 0 .. 1024) { verify(n.pixels[y * 1024 + i] == expected[i]) }
     }

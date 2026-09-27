@@ -115,10 +115,11 @@ def apu_cycle(var a : Apu) {
     if (!a.five_step && f >= 29828 && !a.irq_inhibit) { a.frame_irq = true }
     if ((!a.five_step && f >= 29830) || (a.five_step && f >= 37282)) { a.frame_cycle = 0 }
     if ((a.clock & 1l) == 0l) {
-        for (i in 0 .. 2) {
-            if (a.pulse[i].timer == 0) { a.pulse[i].timer = a.pulse[i].period; a.pulse[i].phase = (a.pulse[i].phase + 1) & 7 }
-            else { a.pulse[i].timer-- }
-        }
+        // The NES has exactly two pulse channels; keep their indices constant.
+        if (a.pulse[0].timer == 0) { a.pulse[0].timer = a.pulse[0].period; a.pulse[0].phase = (a.pulse[0].phase + 1) & 7 }
+        else { a.pulse[0].timer-- }
+        if (a.pulse[1].timer == 0) { a.pulse[1].timer = a.pulse[1].period; a.pulse[1].phase = (a.pulse[1].phase + 1) & 7 }
+        else { a.pulse[1].timer-- }
     }
     if (a.triangle.timer == 0) {
         a.triangle.timer = a.triangle.period
