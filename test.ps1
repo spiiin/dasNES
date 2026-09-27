@@ -8,6 +8,8 @@ if (!$Runner) {
     $Runner = Join-Path $PSScriptRoot 'build\aot\dasNES.exe'
     if (!(Test-Path -LiteralPath $Runner -PathType Leaf)) { $Runner = Join-Path $PSScriptRoot '..\dasSDL3\build\ninja\bin\dasSDL3_runner.exe' }
 }
+& $Runner (Join-Path $PSScriptRoot 'pacing_tests.das') --smoke-test
+if ($LASTEXITCODE -ne 0) { throw 'Frame pacing tests failed' }
 & $Runner (Join-Path $PSScriptRoot 'tests.das') --smoke-test
 if ($LASTEXITCODE -ne 0) { throw 'Core tests failed' }
 & $Runner (Join-Path $PSScriptRoot 'timing_tests.das') --smoke-test
