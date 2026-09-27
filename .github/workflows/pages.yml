@@ -1,0 +1,86 @@
+name: GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+      - name: Checkout dasSDL3 and pinned daScript
+        uses: actions/checkout@v6
+        with:
+          repository: spiiin/dasSDL3
+          ref: 2c559dc0b9127415599640ef2c5b3ccbb498225a
+          submodules: recursive
+          path: build/deps/dasSDL3
+      - name: Checkout Emscripten SDK
+        uses: actions/checkout@v6
+        with:
+          repository: emscripten-core/emsdk
+          ref: 5.0.3
+          path: build/deps/emsdk
+      - name: Install build and browser tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+          python3 -m pip install playwright==1.58.0 pillow==12.1.0
+          python3 -m playwright install --with-deps firefox
+          build/deps/emsdk/emsdk install 5.0.3
+          build/deps/emsdk/emsdk activate 5.0.3
+      - name: Build wasm32 runtime and AOT emulator
+        shell: bash
+        run: |
+          source build/deps/emsdk/emsdk_env.sh
+          dep="$GITHUB_WORKSPACE/build/deps/dasSDL3"
+          emcmake cmake -S "$dep/web" -B "$dep/build/web" -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$dep/build/web" --target dassdl3_web --parallel 2
+          emcmake cmake -S web -B build/web -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DDASSDL3_ROOT="$dep" -DDASSDL3_BUILD="$dep/build/web" -DNODE_EXECUTABLE="$(command -v node)"
+          cmake --build build/web --parallel 2
+          python3 tools/package_pages.py
+      - name: Test demo under the project URL prefix
+        shell: bash
+        run: |
+          mkdir -p build/preview/dasNES
+          cp -a build/pages/. build/preview/dasNES/
+          python3 -m http.server 8080 --bind 127.0.0.1 --directory build/preview >build/http.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8080/dasNES/ >/dev/null; then break; fi
+            sleep 1
+          done
+          python3 web/test_browser.py --browser firefox --url http://127.0.0.1:8080/dasNES/
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: build/pages
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

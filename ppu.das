@@ -35,51 +35,84 @@ def render_line(var n : Nes; y : int) {
             else { if ((n.mask & 24) != 0) { n.status |= 32 }; break }
         }
     }
+    // Decode each selected sprite row once. Reverse OAM order preserves the
+    // first opaque sprite even when it is behind the background.
+    var foreground : int[256]
+    if ((n.mask & 16) != 0) {
+        for (i in 0 .. count) {
+            let s = sprites[count - 1 - i]; let o = s * 4
+            let attr = n.oam[o + 2]
+            var py = y - n.oam[o] - 1
+            if ((attr & 128) != 0) { py = height - 1 - py }
+            var tile = n.oam[o + 1]
+            var base = (n.ctrl & 8) != 0 ? 4096 : 0
+            if (height == 16) { base = (tile & 1) * 4096; tile = (tile & 254) + py / 8 }
+            let address = base + tile * 16 + (py & 7)
+            let lo = chr_read(n, address); let hi = chr_read(n, address + 8)
+            let flags = 16 + (attr & 3) * 4 + (attr & 32) + (s == 0 ? 64 : 0)
+            for (px in 0 .. 8) {
+                let x = n.oam[o + 3] + px
+                if (x >= 256) { break }
+                let shift = (attr & 64) != 0 ? px : 7 - px
+                let fg = ((lo >> shift) & 1) | (((hi >> shift) & 1) << 1)
+                if (fg != 0) { foreground[x] = flags | fg }
+            }
+        }
+    }
+    // Palette and pattern memory cannot change during this scanline renderer.
+    var row_colors : uint[32]
+    for (i in 0 .. 32) {
+        var index = ppu_read(n, 16128 + i)
+        if ((n.mask & 1) != 0) { index &= 48 }
+        row_colors[i] = colors[index]
+    }
+    let bg_start = (n.mask & 8) == 0 ? 256 : ((n.mask & 2) != 0 ? 0 : 8)
+    let fg_start = (n.mask & 16) == 0 ? 256 : ((n.mask & 4) != 0 ? 0 : 8)
+    let wx_start = n.render_fine_x + (n.render_v & 31) * 8
+    let ty = (n.render_v >> 5) & 31
+    let fine_y = (n.render_v >> 12) & 7
+    let pattern_base = (n.ctrl & 16) != 0 ? 4096 : 0
+    var last_tile = -1
+    var lo = 0; var hi = 0; var palette_base = 0
+    var p = y * 1024
     for (x in 0 .. 256) {
         var bg = 0
         var palette = 0
-        if ((n.mask & 8) != 0 && (x >= 8 || (n.mask & 2) != 0)) {
-            let wx = x + n.render_fine_x + (n.render_v & 31) * 8
-            let nx = ((n.render_v >> 10) & 1) ^ (wx / 256)
-            let ny = (n.render_v >> 11) & 1
-            let tx = (wx & 255) / 8; let ty = (n.render_v >> 5) & 31
-            let base = 8192 + (ny * 2 + nx) * 1024
-            let tile = ppu_read(n, base + ty * 32 + tx)
-            bg = pattern(n, (n.ctrl & 16) != 0 ? 4096 : 0, tile, wx & 7, (n.render_v >> 12) & 7)
-            let attr = ppu_read(n, base + 960 + (ty / 4) * 8 + tx / 4)
-            palette = ((attr >> (((ty & 2) << 1) | (tx & 2))) & 3) * 4 + bg
-            if (bg == 0) { palette = 0 }
+        if (x >= bg_start) {
+            let wx = x + wx_start
+            if ((wx >> 3) != last_tile) {
+                last_tile = wx >> 3
+                let nx = ((n.render_v >> 10) & 1) ^ (wx >> 8)
+                let ny = (n.render_v >> 11) & 1
+                let tx = (wx & 255) >> 3
+                let base = 8192 + (ny * 2 + nx) * 1024
+                let tile = ppu_read(n, base + ty * 32 + tx)
+                let address = pattern_base + tile * 16 + fine_y
+                lo = chr_read(n, address); hi = chr_read(n, address + 8)
+                let attr = ppu_read(n, base + 960 + (ty / 4) * 8 + tx / 4)
+                palette_base = ((attr >> (((ty & 2) << 1) | (tx & 2))) & 3) * 4
+            }
+            let shift = 7 - (wx & 7)
+            bg = ((lo >> shift) & 1) | (((hi >> shift) & 1) << 1)
+            if (bg != 0) { palette = palette_base + bg }
         }
-        if ((n.mask & 16) != 0 && (x >= 8 || (n.mask & 4) != 0)) {
-            for (i in 0 .. count) {
-                let s = sprites[i]; let o = s * 4
-                var px = x - n.oam[o + 3]
-                if (px < 0 || px >= 8) { continue }
-                let attr = n.oam[o + 2]
-                var py = y - n.oam[o] - 1
-                if ((attr & 64) != 0) { px = 7 - px }
-                if ((attr & 128) != 0) { py = height - 1 - py }
-                var tile = n.oam[o + 1]
-                var base = (n.ctrl & 8) != 0 ? 4096 : 0
-                if (height == 16) { base = (tile & 1) * 4096; tile = (tile & 254) + py / 8 }
-                let fg = pattern(n, base, tile, px, py & 7)
-                if (fg == 0) { continue }
-                if (s == 0 && bg != 0 && x < 255 && n.sprite0_dot < 0) { n.sprite0_dot = x + 1 }
-                if (bg == 0 || (attr & 32) == 0) { palette = 16 + (attr & 3) * 4 + fg }
-                break
+        if (x >= fg_start) {
+            let fg = foreground[x]
+            if (fg != 0) {
+                if ((fg & 64) != 0 && bg != 0 && x < 255 && n.sprite0_dot < 0) { n.sprite0_dot = x + 1 }
+                if (bg == 0 || (fg & 32) == 0) { palette = fg & 31 }
             }
         }
-        var index = ppu_read(n, 16128 + palette)
-        if ((n.mask & 1) != 0) { index &= 48 }
-        let rgb = colors[index]
-        let p = (y * 256 + x) * 4
+        let rgb = row_colors[palette]
         n.pixels[p] = uint8((rgb >> 16) & 255u)
         n.pixels[p + 1] = uint8((rgb >> 8) & 255u)
         n.pixels[p + 2] = uint8(rgb & 255u)
         n.pixels[p + 3] = uint8(255)
+        p += 4
         if (n.zapper && abs(x - n.zapper_x) <= 4 && abs(y - n.zapper_y) <= 4 && int((rgb >> 16) & 255u) + int((rgb >> 8) & 255u) + int(rgb & 255u) > 500) { n.zapper_light_until = n.cycles + 2500l }
     }
 }
+
 def tick_ppu(var n : Nes; cpu_cycles : int) {
     var remaining = cpu_cycles * 3
     while (remaining > 0) {

@@ -16,6 +16,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Core tests failed' }
 if ($LASTEXITCODE -ne 0) { throw 'PPU timing tests failed' }
 & $Runner (Join-Path $PSScriptRoot 'scroll_tests.das') --smoke-test
 if ($LASTEXITCODE -ne 0) { throw 'PPU scroll tests failed' }
+& $Runner (Join-Path $PSScriptRoot 'renderer_tests.das') --smoke-test
+if ($LASTEXITCODE -ne 0) { throw 'Renderer reference tests failed' }
 & $Runner (Join-Path $PSScriptRoot 'hardware_tests.das') --smoke-test
 if ($LASTEXITCODE -ne 0) { throw 'APU/mapper tests failed' }
 $previousRom = $env:DASNES_ROM
