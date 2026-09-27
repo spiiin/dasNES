@@ -11,7 +11,7 @@
 - **CPU:** Ricoh 2A03/6502, все 151 официальная инструкция, прерывания NMI/IRQ, учёт тактов и OAM DMA.
 - **PPU:** изображение 256×240, фон, палитры, спрайты 8×8 и 8×16, приоритеты, sprite-zero hit и скроллинг.
 - **APU:** два импульсных канала, треугольный, шумовой и DMC; вывод монофонического звука 48 кГц.
-- **Картриджи:** iNES 1.0, мапперы 0 (NROM), 1 (MMC1), 2 (UxROM), 4 (MMC3), переключение PRG/CHR-банков, CHR RAM и зеркалирование nametable.
+- **Картриджи:** iNES 1.0, мапперы 0 (NROM), 1 (MMC1), 2 (UxROM), 3 (CNROM), 4 (MMC3), 42 (FDS conversions), переключение PRG/CHR-банков, CHR RAM и зеркалирование nametable.
 - **Ввод:** контроллер с клавиатуры и NES Zapper с мышью.
 - **Темп игры:** частота NTSC около 60,1 кадра/с независимо от частоты обновления монитора; счётчик FPS показывает кадры эмуляции.
 - **Браузер:** загрузка локального ROM, звук, пауза, перезапуск и Zapper. Файл ROM остаётся в памяти браузера и не отправляется на сервер.
@@ -169,6 +169,7 @@ python -m http.server 8080 --bind 127.0.0.1 --directory build/web/site
 - Поддерживается NTSC; PAL, NES 2.0, другие мапперы и неофициальные инструкции CPU пока не реализованы.
 - Нет сохранения battery-backed SRAM на диск, сохранений состояния и второго обычного контроллера.
 - PPU рисует по строкам: изменения внутри строки и аппаратный конвейер выборки пикселей воспроизводятся приблизительно.
+- CNROM: оригинальные iNES-платы с PRG 16/32 KiB и CHR ROM 8–32 KiB, AND bus conflicts. NES 2.0 submapper и расширенные CNROM-платы пока не поддерживаются.
 - MMC3 IRQ, взаимодействие DMC/OAM DMA, пограничные случаи NMI и Zapper пока не полностью соответствуют аппаратуре.
 - Аппаратная ошибка sprite overflow и цветовое emphasis не воспроизводятся.
 
@@ -199,7 +200,7 @@ python -m http.server 8080 --bind 127.0.0.1 --directory build/web/site
 | [cpu.das](cpu.das) | Инструкции Ricoh 2A03/6502 |
 | [ppu.das](ppu.das) | Регистры, тайминги и изображение PPU |
 | [apu.das](apu.das) | Звуковые каналы и микшер |
-| [mapper.das](mapper.das) | NROM, MMC1, UxROM и MMC3 |
+| [mapper.das](mapper.das) | NROM, MMC1, UxROM, CNROM и MMC3 |
 | [pacing.das](pacing.das) | Синхронизация времени и кадров |
 | [main.das](main.das), [native/](native/) | Настольная версия и AOT-сборка |
 | [web_main.das](web_main.das), [web/](web/) | Браузерная версия, WebAssembly и веб-интерфейс |
@@ -212,3 +213,5 @@ python -m http.server 8080 --bind 127.0.0.1 --directory build/web/site
 - [Porting a NES emulator from Go to Nim](https://hookrace.net/blog/porting-nes-go-nim/) — пример реализации и переноса эмулятора.
 - [NES test ROMs](https://github.com/christopherpow/nes-test-roms) — тестовые программы и эталонные данные.
 - [dasSDL3](https://github.com/spiiin/dasSDL3) — привязки SDL3 к daScript.
+
+Mapper 42: PRG 128 KiB, CHR ROM до 128 KiB или CHR RAM 8 KiB; банк ROM в $6000–$7FFF, фиксированные последние 32 KiB PRG, CHR-банки, mirroring и циклический CPU IRQ. Это поддержка картриджных конверсий, не дисковода FDS. Спецификация: https://www.nesdev.org/wiki/INES_Mapper_042 .

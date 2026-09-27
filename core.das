@@ -74,7 +74,10 @@ def read(var n : Nes; address : int) : int {
     if (a == 16405) { return apu_status(n.apu) }
     if (a == 16407) { return 64 | (n.zapper ? ((n.zapper_trigger ? 16 : 0) | (n.cycles >= n.zapper_light_until ? 8 : 0)) : 0) }
     if (a >= 32768) { return n.prg[a - 32768] }
-    if (a >= 24576) { return n.ram_enabled ? n.sram[a - 24576] : 255 }
+    if (a >= 24576) {
+        if (n.mapper == 42) { return int(n.prg_rom[(n.banks[0] * 8192 + a - 24576) % length(n.prg_rom)]) }
+        return n.ram_enabled ? n.sram[a - 24576] : 255
+    }
     return 0
 }
 def write(var n : Nes; address, value : int) {
@@ -110,7 +113,7 @@ def write(var n : Nes; address, value : int) {
     elif (a == 16406) { n.strobe = (b & 1) != 0; n.shift = n.buttons }
     elif (a >= 16384 && a <= 16407) { apu_write(n.apu, a, b) }
     elif (a >= 32768) { mapper_write(n, a, b) }
-    elif (a >= 24576 && n.ram_enabled && !n.ram_protect) { n.sram[a - 24576] = b }
+    elif (a >= 24576 && n.mapper != 42 && n.ram_enabled && !n.ram_protect) { n.sram[a - 24576] = b }
 }
 def word(var n : Nes; a : int) : int { let lo = read(n, a); return lo | (read(n, a + 1) << 8) }
 def fetch(var n : Nes) : int { let b = read(n, n.pc); n.pc = (n.pc + 1) & 65535; return b }
@@ -140,8 +143,8 @@ def load_rom(var n : Nes; path : string) : bool {
     if (fread(f, h) != 16 || h[0] != 78 || h[1] != 69 || h[2] != 83 || h[3] != 26) { print("Invalid iNES header\n"); return false }
     let flags6 = int(h[6]); let flags7 = int(h[7])
     let mapper = (flags6 >> 4) | (flags7 & 240)
-    if ((flags7 & 12) == 8 || (mapper != 0 && mapper != 1 && mapper != 2 && mapper != 4) || (flags7 & 3) != 0 || h[4] == 0 || (mapper == 0 && (int(h[4]) > 2 || int(h[5]) > 1)) || (int(h[9]) & 1) != 0) {
-        print("Supported ROMs: NTSC iNES 1.0, mapper 0/1/2/4; received mapper {mapper}\n"); return false
+    if ((flags7 & 12) == 8 || (mapper != 0 && mapper != 1 && mapper != 2 && mapper != 3 && mapper != 4 && mapper != 42) || (flags7 & 3) != 0 || h[4] == 0 || (mapper == 0 && (int(h[4]) > 2 || int(h[5]) > 1)) || (mapper == 3 && (int(h[4]) > 2 || h[5] == 0 || int(h[5]) > 4)) || (mapper == 42 && (int(h[4]) != 8 || int(h[5]) > 16)) || (int(h[9]) & 1) != 0) {
+        print("Supported ROMs: NTSC iNES 1.0, mapper 0/1/2/3/4/42 (CNROM: PRG <=32 KiB, CHR 8-32 KiB); received mapper {mapper}\n"); return false
     }
     n.vertical = (flags6 & 1) != 0; n.four_screen = (flags6 & 8) != 0; n.chr_ram = h[5] == 0
     if ((flags6 & 4) != 0) {
@@ -163,8 +166,6 @@ def load_rom(var n : Nes; path : string) : bool {
     reset(n)
     return true
 }
-
-
 
 
 

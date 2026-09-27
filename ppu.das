@@ -120,6 +120,7 @@ def render_line(var n : Nes; y : int) {
 }
 
 def tick_ppu(var n : Nes; cpu_cycles : int) {
+    mapper_cpu_clock(n, cpu_cycles)
     var remaining = cpu_cycles * 3
     while (remaining > 0) {
         // Skip spans with no observable event in this scanline-based PPU.

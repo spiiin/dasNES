@@ -55,7 +55,7 @@ struct Nes {
     prg_slots : int[4]
     chr_slots : int[8]
     single_screen : int = -1
-    bank_select, ux_bank : int
+    bank_select, ux_bank, cn_bank : int
     banks : int[8]
     mmc1_shift : int = 16
     mmc1_control : int = 12
@@ -73,4 +73,3 @@ struct Nes {
     apu : Apu = Apu()
     cycles : int64
 }
-

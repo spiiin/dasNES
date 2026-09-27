@@ -12,6 +12,34 @@ def main(smoke : bool) : int {
     resize(n.prg_rom, 131072); resize(n.chr_rom, 32768); resize(n.pixels, 245760)
     for (i in 0 .. 131072) { n.prg_rom[i] = uint8(i / 8192) }
     for (i in 0 .. 32768) { n.chr_rom[i] = uint8(i / 1024) }
+    n.mapper = 3; n.chr_ram = false; n.vertical = true; mapper_init(n)
+    verify(ppu_read(n, 0) == 0 && ppu_read(n, 8191) == 7)
+    // At $E000 the ROM drives 3: all four CHR banks can be selected.
+    for (bank in 0 .. 4) {
+        write(n, 57344, bank)
+        verify(ppu_read(n, 0) == bank * 8 && ppu_read(n, 8191) == bank * 8 + 7)
+        verify(read(n, 32768) == 0 && read(n, 57344) == 3 && n.vertical)
+    }
+    write(n, 49152, 3); verify(ppu_read(n, 0) == 16) // ROM 2 AND CPU 3.
+    ppu_write(n, 0, 255); verify(ppu_read(n, 0) == 16) // CHR ROM is read-only.
+    write(n, 32768, 3); verify(ppu_read(n, 0) == 0) // ROM 0 wins.
+    mapper_init(n); verify(n.cn_bank == 0 && ppu_read(n, 0) == 0)
+    n.mapper = 42; n.chr_ram = false; mapper_init(n)
+    verify(read(n, 32768) == 12 && read(n, 65535) == 15)
+    write(n, 65532, 7); verify(read(n, 24576) == 7 && read(n, 32767) == 7)
+    write(n, 24576, 99); verify(read(n, 24576) == 7)
+    write(n, 32772, 3); verify(ppu_read(n, 0) == 24 && ppu_read(n, 8191) == 31)
+    write(n, 65533, 8); verify(!n.vertical)
+    write(n, 57345, 0); verify(n.vertical)
+    write(n, 65534, 2); mapper_cpu_clock(n, 24575); verify(!n.mapper_irq)
+    mapper_cpu_clock(n, 1); verify(n.mapper_irq)
+    mapper_cpu_clock(n, 8191); verify(n.mapper_irq)
+    mapper_cpu_clock(n, 1); verify(!n.mapper_irq && n.irq_counter == 0)
+    mapper_cpu_clock(n, 24576); verify(n.mapper_irq)
+    write(n, 57346, 0); verify(!n.mapper_irq && n.irq_counter == 0)
+    mapper_cpu_clock(n, 24576); verify(n.irq_counter == 0)
+    n.chr_ram = true; mapper_init(n); ppu_write(n, 123, 77)
+    write(n, 32768, 15); verify(ppu_read(n, 123) == 77)
     n.mapper = 2; n.chr_ram = true; mapper_init(n)
     verify(read(n, 32768) == 0 && read(n, 49152) == 14)
     write(n, 32768, 3); verify(read(n, 32768) == 6 && read(n, 49152) == 14)

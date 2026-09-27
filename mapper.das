@@ -23,8 +23,14 @@ def chr_read(n : Nes; address : int) : int {
 }
 def mapper_sync(var n : Nes) {
     let count = length(n.prg_rom) / 8192
-    if (n.mapper == 0) {
+    if (n.mapper == 0 || n.mapper == 3) {
         for (i in 0 .. 4) { map_prg(n, i, i) }
+        if (n.mapper == 3) {
+            for (i in 0 .. 8) { map_chr(n, i, n.cn_bank * 8 + i) }
+        }
+    } elif (n.mapper == 42) {
+        for (i in 0 .. 4) { map_prg(n, i, count - 4 + i) }
+        for (i in 0 .. 8) { map_chr(n, i, n.chr_ram ? i : n.banks[1] * 8 + i) }
     } elif (n.mapper == 2) {
         map_prg(n, 0, n.ux_bank * 2); map_prg(n, 1, n.ux_bank * 2 + 1)
         map_prg(n, 2, count - 2); map_prg(n, 3, count - 1)
@@ -65,7 +71,7 @@ def mapper_init(var n : Nes) {
     for (i in 0 .. 8) { n.chr_slots[i] = i; n.banks[i] = 0 }
     n.mmc1_control = 12; n.mmc1_shift = 16; n.mmc1_last_write = -100l
     n.mmc1_chr0 = 0; n.mmc1_chr1 = 0; n.mmc1_prg = 0
-    n.bank_select = 0; n.ux_bank = 0; n.single_screen = -1
+    n.bank_select = 0; n.ux_bank = 0; n.cn_bank = 0; n.single_screen = -1
     n.ram_enabled = true; n.ram_protect = false
     n.irq_enabled = false; n.mapper_irq = false; n.irq_reload = false
     n.irq_counter = 0; n.irq_latch = 0
@@ -73,7 +79,22 @@ def mapper_init(var n : Nes) {
 }
 def mapper_write(var n : Nes; address, value : int) {
     n.mapper_writes++
-    if (n.mapper == 2) { n.ux_bank = value; mapper_sync(n) }
+    if (n.mapper == 42) {
+        let reg = address & 57347 // $E003: register aliases across each window.
+        if (reg == 32768) { n.banks[1] = value & 15; mapper_sync(n) }
+        elif (reg == 57344) { n.banks[0] = value & 15 }
+        elif (reg == 57345) { n.vertical = (value & 8) == 0 }
+        elif (reg == 57346) {
+            n.irq_enabled = (value & 2) != 0
+            if (!n.irq_enabled) { n.irq_counter = 0; n.mapper_irq = false }
+        }
+    }
+    elif (n.mapper == 2) { n.ux_bank = value; mapper_sync(n) }
+    elif (n.mapper == 3) {
+        // Original CNROM: ROM and CPU drive the bus together (AND conflict).
+        n.cn_bank = (value & n.prg[address & 32767]) & 3
+        mapper_sync(n)
+    }
     elif (n.mapper == 1) {
         // CPU RMW writes share an instruction timestamp; accept the first only.
         if (n.cycles - n.mmc1_last_write <= 1l) { return }
@@ -101,6 +122,14 @@ def mapper_write(var n : Nes; address, value : int) {
         elif (reg == 57345) { n.irq_enabled = true }
     }
 }
+// Mapper 42's 15-bit M2 counter asserts IRQ during its final 8192 clocks.
+def mapper_cpu_clock(var n : Nes; cycles : int) {
+    if (n.mapper == 42 && n.irq_enabled) {
+        n.irq_counter = (n.irq_counter + cycles) & 32767
+        n.mapper_irq = n.irq_counter >= 24576
+    }
+}
+
 def mapper_irq_clock(var n : Nes) {
     if (n.mapper != 4) { return }
     n.mapper_clocks++
