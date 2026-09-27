@@ -7,6 +7,7 @@ require core public
 def cpu_step(var n : Nes) : int {
     if (n.stall > 0) { let c = n.stall; n.stall = 0; n.cycles += int64(c); return c }
     if (n.nmi) { n.nmi = false; interrupt(n, 65530, false); n.cycles += 7; return 7 }
+    if ((n.mapper_irq || n.apu.frame_irq || n.apu.dmc_irq) && (n.p & 4) == 0) { interrupt(n, 65534, false); n.cycles += 7; n.irq_taken++; return 7 }
     let op_pc = n.pc
     let op = fetch(n)
     var cost = 0

@@ -2,6 +2,8 @@ param(
     [string]$Rom = (Join-Path $PSScriptRoot 'demo.nes'),
     [string]$Runner = '',
     [switch]$Interpreter,
+    [switch]$Mute,
+    [switch]$Zapper,
     [switch]$SmokeTest
 )
 $ErrorActionPreference = 'Stop'
@@ -20,8 +22,12 @@ if ([string]::IsNullOrWhiteSpace($Rom) -or !(Test-Path -LiteralPath $Rom -PathTy
 }
 $romPath = (Get-Item -LiteralPath $Rom -ErrorAction Stop).FullName
 $previousRom = $env:DASNES_ROM
+$previousMute = $env:DASNES_MUTE
+$previousZapper = $env:DASNES_ZAPPER
 try {
     $env:DASNES_ROM = $romPath
+    $env:DASNES_MUTE = if ($Mute) { "1" } else { "0" }
+    $env:DASNES_ZAPPER = if ($Zapper -or [IO.Path]::GetFileName($romPath) -like "Duck Hunt*") { "1" } else { "0" }
     $runnerArgs = @((Join-Path $PSScriptRoot 'main.das'))
     if ($SmokeTest) { $runnerArgs += '--smoke-test' }
     if ($Interpreter -and [IO.Path]::GetFileName($Runner) -eq 'dasNES.exe') { $runnerArgs += '--interpret' }
@@ -29,4 +35,6 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "dasNES failed with exit code $LASTEXITCODE" }
 } finally {
     $env:DASNES_ROM = $previousRom
+    $env:DASNES_MUTE = $previousMute
+    $env:DASNES_ZAPPER = $previousZapper
 }

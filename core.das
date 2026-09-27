@@ -2,33 +2,13 @@ options gen2
 module core
 require daslib/fio
 require daslib/defer
+require mapper public
+require apu public
 
-// NTSC NROM machine. CPU registers are int, explicitly masked to bus width.
-struct Nes {
-    ram : int[2048]
-    prg : int[32768]
-    chr : int[8192]
-    sram : int[8192]
-    nt : int[4096]
-    pal : int[32]
-    oam : int[256]
-    pixels : array<uint8>
-    a, x, y, pc : int
-    sp : int = 253
-    p : int = 36
-    ctrl, mask, status, oa, v, t, fine_x, buffer, bus : int
-    latch, vertical, four_screen, chr_ram, nmi, strobe : bool
-    buttons, shift, scroll_x, scroll_y : int
-    render_v, render_fine_x : int
-    sprite0_dot : int = -1
-    dot : int
-    line : int = 261
-    frame, stall : int
-    cycles : int64
-}
 
 def nt_index(n : Nes; address : int) : int {
     let a = (address - 8192) & 4095
+    if (!n.four_screen && n.single_screen >= 0) { return n.single_screen * 1024 + (a & 1023) }
     let bank = a >> 10
     return n.four_screen ? a : (((n.vertical ? (bank & 1) : (bank >> 1)) << 10) | (a & 1023))
 }
@@ -39,13 +19,13 @@ def pal_index(address : int) : int {
 }
 def ppu_read(n : Nes; address : int) : int {
     let a = address & 16383
-    if (a < 8192) { return n.chr[a] }
+    if (a < 8192) { return chr_read(n, a) }
     if (a < 16128) { return n.nt[nt_index(n, a)] }
     return n.pal[pal_index(a)]
 }
 def ppu_write(var n : Nes; address, value : int) {
     let a = address & 16383
-    if (a < 8192) { if (n.chr_ram) { n.chr[a] = value } }
+    if (a < 8192) { if (n.chr_ram) { n.chr[chr_address(n, a)] = value } }
     elif (a < 16128) { n.nt[nt_index(n, a)] = value }
     else { n.pal[pal_index(a)] = value & 63 }
 }
@@ -91,9 +71,10 @@ def read(var n : Nes; address : int) : int {
         if (!n.strobe) { n.shift = (n.shift >> 1) | 128 }
         return result
     }
-    if (a == 16407) { return 64 }
+    if (a == 16405) { return apu_status(n.apu) }
+    if (a == 16407) { return 64 | (n.zapper ? ((n.zapper_trigger ? 16 : 0) | (n.cycles >= n.zapper_light_until ? 8 : 0)) : 0) }
     if (a >= 32768) { return n.prg[a - 32768] }
-    if (a >= 24576) { return n.sram[a - 24576] }
+    if (a >= 24576) { return n.ram_enabled ? n.sram[a - 24576] : 255 }
     return 0
 }
 def write(var n : Nes; address, value : int) {
@@ -127,7 +108,9 @@ def write(var n : Nes; address, value : int) {
         n.stall += 513 + int(n.cycles & 1l)
     }
     elif (a == 16406) { n.strobe = (b & 1) != 0; n.shift = n.buttons }
-    elif (a >= 24576 && a < 32768) { n.sram[a - 24576] = b }
+    elif (a >= 16384 && a <= 16407) { apu_write(n.apu, a, b) }
+    elif (a >= 32768) { mapper_write(n, a, b) }
+    elif (a >= 24576 && n.ram_enabled && !n.ram_protect) { n.sram[a - 24576] = b }
 }
 def word(var n : Nes; a : int) : int { let lo = read(n, a); return lo | (read(n, a + 1) << 8) }
 def fetch(var n : Nes) : int { let b = read(n, n.pc); n.pc = (n.pc + 1) & 65535; return b }
@@ -157,8 +140,8 @@ def load_rom(var n : Nes; path : string) : bool {
     if (fread(f, h) != 16 || h[0] != 78 || h[1] != 69 || h[2] != 83 || h[3] != 26) { print("Invalid iNES header\n"); return false }
     let flags6 = int(h[6]); let flags7 = int(h[7])
     let mapper = (flags6 >> 4) | (flags7 & 240)
-    if ((flags7 & 12) == 8 || mapper != 0 || (flags7 & 3) != 0 || (h[4] != 1 && h[4] != 2) || int(h[5]) > 1 || (int(h[9]) & 1) != 0) {
-        print("Supported ROMs: NTSC iNES 1.0 NROM, 16/32 KiB PRG, 0/8 KiB CHR\n"); return false
+    if ((flags7 & 12) == 8 || (mapper != 0 && mapper != 1 && mapper != 2 && mapper != 4) || (flags7 & 3) != 0 || h[4] == 0 || (mapper == 0 && (int(h[4]) > 2 || int(h[5]) > 1)) || (int(h[9]) & 1) != 0) {
+        print("Supported ROMs: NTSC iNES 1.0, mapper 0/1/2/4; received mapper {mapper}\n"); return false
     }
     n.vertical = (flags6 & 1) != 0; n.four_screen = (flags6 & 8) != 0; n.chr_ram = h[5] == 0
     if ((flags6 & 4) != 0) {
@@ -166,16 +149,17 @@ def load_rom(var n : Nes; path : string) : bool {
         if (fread(f, trainer) != 512) { print("Truncated trainer\n"); return false }
         for (i in 0 .. 512) { n.sram[4096 + i] = int(trainer[i]) }
     }
-    var data : array<uint8>
+    n.mapper = mapper
+    n.zapper = get_env_variable("DASNES_ZAPPER") == "1"
     let size = int(h[4]) * 16384
-    resize(data, size)
-    if (fread(f, data) != size) { print("Truncated PRG ROM\n"); return false }
-    for (i in 0 .. 32768) { n.prg[i] = int(data[i % size]) }
-    if (!n.chr_ram) {
-        resize(data, 8192)
-        if (fread(f, data) != 8192) { print("Truncated CHR ROM\n"); return false }
-        for (i in 0 .. 8192) { n.chr[i] = int(data[i]) }
-    }
+    resize(n.prg_rom, size)
+    if (fread(f, n.prg_rom) != size) { print("Truncated PRG ROM\n"); return false }
+    let chr_size = int(h[5]) * 8192
+    resize(n.chr_rom, chr_size)
+    if (chr_size > 0 && fread(f, n.chr_rom) != chr_size) { print("Truncated CHR ROM\n"); return false }
+    for (i in 0 .. 8192) { n.chr[i] = chr_size > 0 ? int(n.chr_rom[i]) : 0 }
+    mapper_init(n)
+    print("Mapper {mapper}, PRG {size / 1024} KiB, CHR {chr_size / 1024} KiB\n")
     reset(n)
     return true
 }

@@ -1,6 +1,7 @@
 options gen2
 module ppu
 require cpu public
+require math
 
 // Common 2C02 RGB approximation; emphasis bits are not yet simulated.
 let colors = fixed_array(
@@ -15,7 +16,7 @@ let colors = fixed_array(
 
 def pattern(n : Nes; base, tile, x, y : int) : int {
     let a = base + tile * 16 + y
-    return ((n.chr[a & 8191] >> (7 - x)) & 1) | (((n.chr[(a + 8) & 8191] >> (7 - x)) & 1) << 1)
+    return ((chr_read(n, a) >> (7 - x)) & 1) | (((chr_read(n, a + 8) >> (7 - x)) & 1) << 1)
 }
 
 // Snapshot the live scroll address at the start of a scanline. The fetch
@@ -76,6 +77,7 @@ def render_line(var n : Nes; y : int) {
         n.pixels[p + 1] = uint8((rgb >> 8) & 255u)
         n.pixels[p + 2] = uint8(rgb & 255u)
         n.pixels[p + 3] = uint8(255)
+        if (n.zapper && abs(x - n.zapper_x) <= 4 && abs(y - n.zapper_y) <= 4 && int((rgb >> 16) & 255u) + int((rgb >> 8) & 255u) + int(rgb & 255u) > 500) { n.zapper_light_until = n.cycles + 2500l }
     }
 }
 def tick_ppu(var n : Nes; cpu_cycles : int) {
@@ -91,6 +93,9 @@ def tick_ppu(var n : Nes; cpu_cycles : int) {
             elif (n.line == 261 && n.dot < 280) { next_dot = 280 }
             elif (n.line == 261 && n.dot < 304) { next_dot = n.dot + 1 }
         }
+        // Approximate filtered A12 using the sprite/background fetch phases.
+        let irq_dot = (n.ctrl & 16) != 0 ? 324 : 260
+        if (n.mapper == 4 && (n.line < 240 || n.line == 261) && (n.mask & 24) != 0 && n.dot < irq_dot && next_dot > irq_dot) { next_dot = irq_dot }
         if (n.line < 240 && n.sprite0_dot > n.dot && n.sprite0_dot < next_dot) { next_dot = n.sprite0_dot }
         let distance = next_dot - n.dot
         if (remaining < distance) { n.dot += remaining; return }
@@ -105,6 +110,7 @@ def tick_ppu(var n : Nes; cpu_cycles : int) {
             if (n.dot == 257) { n.v = (n.v & ~1055) | (n.t & 1055) }
             if (n.line == 261 && n.dot >= 280 && n.dot <= 304) { n.v = (n.v & ~31712) | (n.t & 31712) }
         }
+        if (n.mapper == 4 && (n.line < 240 || n.line == 261) && (n.mask & 24) != 0 && n.dot == irq_dot && ((n.ctrl & 24) != 0 || (n.ctrl & 32) != 0)) { mapper_irq_clock(n) }
         let skip = odd_short && n.dot == 340
         if (n.dot >= 341 || skip) {
             n.dot = 0; n.line++
@@ -113,6 +119,7 @@ def tick_ppu(var n : Nes; cpu_cycles : int) {
     }
 }
 def run_frame(var n : Nes) {
+    clear(n.apu.pcm)
     let target = n.frame + 1
-    while (n.frame < target) { let c = cpu_step(n); tick_ppu(n, c) }
+    while (n.frame < target) { let c = cpu_step(n); tick_apu(n, c); tick_ppu(n, c) }
 }
