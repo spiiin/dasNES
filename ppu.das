@@ -19,12 +19,9 @@ def pattern(n : Nes; base, tile, x, y : int) : int {
     return ((chr_read(n, a) >> (7 - x)) & 1) | (((chr_read(n, a + 8) >> (7 - x)) & 1) << 1)
 }
 
-// Snapshot the live scroll address at the start of a scanline. The fetch
-// pipeline is approximated; t/v transfers and sprite-zero timing are scheduled.
+// Snapshot scroll state and draw whole tile rows before sprite composition.
 [unsafe_deref]
 def render_line(var n : Nes; y : int) {
-    // Validate once before the unchecked row stores. The array is not resized
-    // while these pointers are live; a row contains exactly 256 RGBA pixels.
     verify(y >= 0 && y < 240 && length(n.pixels) >= 245760)
     var row = unsafe(addr(n.pixels[y * 1024]))
     verify((intptr(row) & 3ul) == 0ul)
@@ -32,45 +29,7 @@ def render_line(var n : Nes; y : int) {
     var endian = 1u
     var little_endian = false
     unsafe { little_endian = *reinterpret<uint8?>(addr(endian)) == uint8(1) }
-    n.render_v = n.v
-    n.render_fine_x = n.fine_x
-    n.sprite0_dot = -1
-    var sprites : int[8]
-    var count = 0
-    let height = (n.ctrl & 32) != 0 ? 16 : 8
-    for (s in 0 .. 64) {
-        let sy = n.oam[s * 4] + 1
-        if (y >= sy && y < sy + height) {
-            if (count < 8) { sprites[count] = s; count++ }
-            else { if ((n.mask & 24) != 0) { n.status |= 32 }; break }
-        }
-    }
-    // Decode each selected sprite row once. Reverse OAM order preserves the
-    // first opaque sprite even when it is behind the background.
-    var foreground : int[256]
-    var foreground_pixels = unsafe(addr(foreground[0]))
-    if ((n.mask & 16) != 0) {
-        for (i in 0 .. count) {
-            let s = sprites[count - 1 - i]; let o = s * 4
-            let attr = n.oam[o + 2]
-            var py = y - n.oam[o] - 1
-            if ((attr & 128) != 0) { py = height - 1 - py }
-            var tile = n.oam[o + 1]
-            var base = (n.ctrl & 8) != 0 ? 4096 : 0
-            if (height == 16) { base = (tile & 1) * 4096; tile = (tile & 254) + py / 8 }
-            let address = base + tile * 16 + (py & 7)
-            let lo = chr_read(n, address); let hi = chr_read(n, address + 8)
-            let flags = 16 + (attr & 3) * 4 + (attr & 32) + (s == 0 ? 64 : 0)
-            for (px in 0 .. 8) {
-                let x = n.oam[o + 3] + px
-                if (x >= 256) { break }
-                let shift = (attr & 64) != 0 ? px : 7 - px
-                let fg = ((lo >> shift) & 1) | (((hi >> shift) & 1) << 1)
-                if (fg != 0 && x >= 0) { unsafe { foreground_pixels[x] = flags | fg } }
-            }
-        }
-    }
-    // Palette and pattern memory cannot change during this scanline renderer.
+    n.render_v = n.v; n.render_fine_x = n.fine_x; n.sprite0_dot = -1
     var row_colors : uint[32]
     for (i in 0 .. 32) {
         var index = ppu_read(n, 16128 + i)
@@ -79,49 +38,80 @@ def render_line(var n : Nes; y : int) {
         row_colors[i] = little_endian ? (0xff000000u | ((rgb & 255u) << 16) | (rgb & 65280u) | (rgb >> 16)) : ((rgb << 8) | 255u)
     }
     var packed_colors = unsafe(addr(row_colors[0]))
+    // One opacity byte per tile row, including the clipped rightmost tile.
+    var background : int[33]
+    var bg = unsafe(addr(background[0]))
     let bg_start = (n.mask & 8) == 0 ? 256 : ((n.mask & 2) != 0 ? 0 : 8)
-    let fg_start = (n.mask & 16) == 0 ? 256 : ((n.mask & 4) != 0 ? 0 : 8)
+    for (x in 0 .. bg_start) { unsafe { pixels[x] = packed_colors[0] } }
     let wx_start = n.render_fine_x + (n.render_v & 31) * 8
     let ty = (n.render_v >> 5) & 31
     let fine_y = (n.render_v >> 12) & 7
     let pattern_base = (n.ctrl & 16) != 0 ? 4096 : 0
-    var last_tile = -1
-    var lo = 0; var hi = 0; var palette_base = 0
-    for (x in 0 .. 256) {
-        var bg = 0
-        var palette = 0
-        if (x >= bg_start) {
-            let wx = x + wx_start
-            if ((wx >> 3) != last_tile) {
-                last_tile = wx >> 3
-                let nx = ((n.render_v >> 10) & 1) ^ (wx >> 8)
-                let ny = (n.render_v >> 11) & 1
-                let tx = (wx & 255) >> 3
-                let base = 8192 + (ny * 2 + nx) * 1024
-                let tile = ppu_read(n, base + ty * 32 + tx)
-                let address = pattern_base + tile * 16 + fine_y
-                lo = chr_read(n, address); hi = chr_read(n, address + 8)
-                let attr = ppu_read(n, base + 960 + (ty / 4) * 8 + tx / 4)
-                palette_base = ((attr >> (((ty & 2) << 1) | (tx & 2))) & 3) * 4
-            }
-            let shift = 7 - (wx & 7)
-            bg = ((lo >> shift) & 1) | (((hi >> shift) & 1) << 1)
-            if (bg != 0) { palette = palette_base + bg }
+    var x = bg_start
+    while (x < 256) {
+        let wx = x + wx_start
+        let nx = ((n.render_v >> 10) & 1) ^ (wx >> 8)
+        let ny = (n.render_v >> 11) & 1
+        let tx = (wx & 255) >> 3
+        let base = 8192 + (ny * 2 + nx) * 1024
+        let tile = ppu_read(n, base + ty * 32 + tx)
+        let address = pattern_base + tile * 16 + fine_y
+        var lo = chr_read(n, address)
+        var hi = chr_read(n, address + 8)
+        unsafe { bg[(x + n.render_fine_x) >> 3] = lo | hi }
+        lo <<= wx & 7; hi <<= wx & 7
+        let attr = ppu_read(n, base + 960 + (ty / 4) * 8 + tx / 4)
+        let palette_base = ((attr >> (((ty & 2) << 1) | (tx & 2))) & 3) * 4
+        let end_x = min(256, x + 8 - (wx & 7))
+        while (x < end_x) {
+            let color = ((lo >> 7) & 1) | ((hi >> 6) & 2)
+            unsafe { pixels[x] = packed_colors[color == 0 ? 0 : palette_base + color] }
+            lo <<= 1; hi <<= 1; x++
         }
-        if (x >= fg_start) {
-            let fg = unsafe(foreground_pixels[x])
-            if (fg != 0) {
-                if ((fg & 64) != 0 && bg != 0 && x < 255 && n.sprite0_dot < 0) { n.sprite0_dot = x + 1 }
-                if (bg == 0 || (fg & 32) == 0) { palette = fg & 31 }
-            }
-        }
-        unsafe { pixels[x] = packed_colors[palette] }
     }
-    // Zapper observes at most nine pixels of this row. Keep it outside the
-    // common pixel loop; all pixels here have the same emulated CPU timestamp.
+    // Only visit each sprite's eight pixels, in OAM order. A hidden sprite
+    // still claims its pixels: lower-priority sprites cannot show through it.
+    var occupied : int[256]
+    var claimed = unsafe(addr(occupied[0]))
+    let height = (n.ctrl & 32) != 0 ? 16 : 8
+    let fg_start = (n.mask & 4) != 0 ? 0 : 8
+    var count = 0
+    for (s in 0 .. 64) {
+        let o = s * 4
+        let sy = n.oam[o] + 1
+        if (y < sy || y >= sy + height) { continue }
+        if (count == 8) { if ((n.mask & 24) != 0) { n.status |= 32 }; break }
+        count++
+        if ((n.mask & 16) == 0) { continue }
+        let attr = n.oam[o + 2]
+        var py = y - sy
+        if ((attr & 128) != 0) { py = height - 1 - py }
+        var tile = n.oam[o + 1]
+        var base = (n.ctrl & 8) != 0 ? 4096 : 0
+        if (height == 16) { base = (tile & 1) * 4096; tile = (tile & 254) + py / 8 }
+        let address = base + tile * 16 + (py & 7)
+        let lo = chr_read(n, address); let hi = chr_read(n, address + 8)
+        let palette_base = 16 + (attr & 3) * 4
+        for (px in 0 .. 8) {
+            let sx = n.oam[o + 3] + px
+            if (sx >= 256) { break }
+            if (sx < fg_start) { continue }
+            let shift = (attr & 64) != 0 ? px : 7 - px
+            let color = ((lo >> shift) & 1) | (((hi >> shift) & 1) << 1)
+            if (color == 0) { continue }
+            unsafe {
+                if (claimed[sx] != 0) { continue }
+                claimed[sx] = 1
+                let bx = sx + n.render_fine_x
+                let opaque = sx >= bg_start && ((bg[bx >> 3] >> (7 - (bx & 7))) & 1) != 0
+                if (s == 0 && opaque && sx < 255 && n.sprite0_dot < 0) { n.sprite0_dot = sx + 1 }
+                if (!opaque || (attr & 32) == 0) { pixels[sx] = packed_colors[palette_base + color] }
+            }
+        }
+    }
     if (n.zapper && abs(y - n.zapper_y) <= 4) {
-        for (x in max(0, n.zapper_x - 4) .. min(256, n.zapper_x + 5)) {
-            let p = x * 4
+        for (sx in max(0, n.zapper_x - 4) .. min(256, n.zapper_x + 5)) {
+            let p = sx * 4
             var brightness = 0
             unsafe { brightness = int(row[p]) + int(row[p + 1]) + int(row[p + 2]) }
             if (brightness > 500) { n.zapper_light_until = n.cycles + 2500l; break }

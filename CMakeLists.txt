@@ -40,7 +40,7 @@ add_executable(dasNES native/host.cpp)
 target_link_libraries(dasNES PRIVATE sdl_binding)
 file(GLOB local_scripts CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.das")
 file(GLOB_RECURSE library_scripts CONFIGURE_DEPENDS "${DASSDL3_ROOT}/dassdl3/*.das" "${DAS_ROOT}/daslib/*.das")
-set(aot_inputs pacing.das pacing_tests.das state.das mapper.das apu.das hardware_tests.das rom_replay.das main.das core.das cpu.das ppu.das tests.das demo_test.das trace.das benchmark.das timing_tests.das scroll_tests.das smb_scroll_test.das profile.das renderer_tests.das
+set(aot_inputs pacing.das pacing_tests.das state.das mapper.das apu.das hardware_tests.das apu_event_tests.das rom_replay.das main.das core.das cpu.das ppu.das tests.das demo_test.das trace.das benchmark.das timing_tests.das scroll_tests.das smb_scroll_test.das profile.das renderer_tests.das
     "${DASSDL3_ROOT}/dassdl3/sdl3_result.das"
     "${DASSDL3_ROOT}/dassdl3/sdl3_boost.das"
     "${DASSDL3_ROOT}/dassdl3/sdl3_pixels_boost.das"

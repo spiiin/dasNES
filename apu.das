@@ -23,12 +23,14 @@ def sweep_target(c : SoundChannel; first : bool) : int {
     return (c.sweep & 8) != 0 ? c.period - delta - (first ? 1 : 0) : c.period + delta
 }
 def quarter_frame(var a : Apu) {
+    a.quiet_cycles = 0
     envelope_clock(a.pulse[0]); envelope_clock(a.pulse[1]); envelope_clock(a.noise)
     if (a.linear_reload) { a.linear = a.triangle.control & 127 }
     elif (a.linear > 0) { a.linear-- }
     if ((a.triangle.control & 128) == 0) { a.linear_reload = false }
 }
 def half_frame(var a : Apu) {
+    a.quiet_cycles = 0
     for (i in 0 .. 2) {
         if (a.pulse[i].length > 0 && (a.pulse[i].control & 32) == 0) { a.pulse[i].length-- }
         let target = sweep_target(a.pulse[i], i == 0)
@@ -39,8 +41,9 @@ def half_frame(var a : Apu) {
     if (a.triangle.length > 0 && (a.triangle.control & 128) == 0) { a.triangle.length-- }
     if (a.noise.length > 0 && (a.noise.control & 32) == 0) { a.noise.length-- }
 }
-def dmc_restart(var a : Apu) { a.dmc_current = 49152 + a.dmc_address * 64; a.dmc_remaining = a.dmc_length * 16 + 1 }
+def dmc_restart(var a : Apu) { a.quiet_cycles = 0; a.dmc_current = 49152 + a.dmc_address * 64; a.dmc_remaining = a.dmc_length * 16 + 1 }
 def apu_write(var a : Apu; address, b : int) {
+    a.quiet_cycles = 0
     let reg = address - 16384
     if (reg < 8) {
         let i = reg / 4
@@ -104,6 +107,7 @@ def apu_sample(var a : Apu) {
     a.samples++; a.mix_sum = 0.0; a.pulse_sum = 0.0; a.mix_count = 0
 }
 def apu_cycle(var a : Apu) {
+    a.quiet_cycles = 0
     a.clock++; a.frame_cycle++
     if (a.reset_delay > 0) {
         a.reset_delay--
@@ -146,23 +150,85 @@ def apu_cycle(var a : Apu) {
     let p = pulse_output(a.pulse[0], true) + pulse_output(a.pulse[1], false)
     let t = a.triangle.phase < 16 ? 15 - a.triangle.phase : a.triangle.phase - 16
     let noise = a.noise.length > 0 && (a.noise_shift & 1) == 0 ? envelope_output(a.noise) : 0
-    a.pulse_sum += float(p)
-    a.mix_sum += float(t) / 8227.0 + float(noise) / 12241.0 + float(a.dmc_output) / 22638.0
+    a.pulse_cached = float(p)
+    a.mix_cached = float(t) / 8227.0 + float(noise) / 12241.0 + float(a.dmc_output) / 22638.0
+    a.pulse_sum += a.pulse_cached
+    a.mix_sum += a.mix_cached
     a.mix_count++; a.sample_phase += 48000
     if (a.sample_phase >= 1789773) { a.sample_phase -= 1789773; apu_sample(a) }
 }
+// Number of clocks before the next observable APU event. Register writes
+// invalidate this cache. Sample boundaries also end spans, preserving resampling.
+def apu_quiet_span(a : Apu) : int {
+    let f = a.frame_cycle
+    let next_frame = f < 7457 ? 7457 : (f < 14913 ? 14913 : (f < 22371 ? 22371 : (a.five_step ? (f < 37281 ? 37281 : 37282) : (f < 29828 ? 29828 : (f < 29829 ? 29829 : 29830)))))
+    var span = min(next_frame - f - 1, (1789773 - a.sample_phase - 1) / 48000)
+    if (a.reset_delay > 0) { span = min(span, a.reset_delay - 1) }
+    let odd = int(a.clock & 1l)
+    if (a.pulse[0].length > 0 && a.pulse[0].period >= 8 && sweep_target(a.pulse[0], true) <= 2047) { span = min(span, a.pulse[0].timer * 2 + 1 - odd) }
+    if (a.pulse[1].length > 0 && a.pulse[1].period >= 8 && sweep_target(a.pulse[1], false) <= 2047) { span = min(span, a.pulse[1].timer * 2 + 1 - odd) }
+    if (a.triangle.length > 0 && a.linear > 0 && a.triangle.period > 1) { span = min(span, a.triangle.timer) }
+    if (a.noise.length > 0) { span = min(span, a.noise.timer) }
+    span = min(span, a.dmc_timer)
+    if (a.dmc_empty && a.dmc_remaining > 0) { return 0 }
+    return max(span, 0)
+}
+
+def pulse_quiet(var c : SoundChannel; clocks : int) {
+    if (clocks <= c.timer) { c.timer -= clocks }
+    else {
+        let elapsed = clocks - c.timer - 1
+        c.phase = (c.phase + 1 + elapsed / (c.period + 1)) & 7
+        c.timer = c.period - elapsed % (c.period + 1)
+    }
+}
+
+def apu_advance_quiet(var a : Apu; clocks : int) {
+    let pulse_clocks = (clocks + int(a.clock & 1l)) / 2
+    pulse_quiet(a.pulse[0], pulse_clocks); pulse_quiet(a.pulse[1], pulse_clocks)
+    if (clocks <= a.triangle.timer) { a.triangle.timer -= clocks }
+    else { a.triangle.timer = a.triangle.period - (clocks - a.triangle.timer - 1) % (a.triangle.period + 1) }
+    // A muted noise channel still advances its LFSR for a later enable write.
+    var remaining = clocks
+    while (remaining > a.noise.timer) {
+        remaining -= a.noise.timer + 1
+        a.noise.timer = noise_period[a.noise.period & 15] - 1
+        let tap = (a.noise.period & 128) != 0 ? 6 : 1
+        let feedback = (a.noise_shift ^ (a.noise_shift >> tap)) & 1
+        a.noise_shift = (a.noise_shift >> 1) | (feedback << 14)
+    }
+    a.noise.timer -= remaining
+    a.dmc_timer -= clocks
+    a.clock += int64(clocks); a.frame_cycle += clocks
+    if (a.reset_delay > 0) { a.reset_delay -= clocks }
+    // Keep the original floating-point addition order for bit-identical PCM.
+    for (_ in 0 .. clocks) { a.mix_sum += a.mix_cached }
+    a.pulse_sum += a.pulse_cached * float(clocks)
+    a.mix_count += clocks; a.sample_phase += 48000 * clocks
+    a.quiet_cycles -= clocks
+}
+
 def tick_apu(var n : Nes; cycles : int) {
-    for (i in 0 .. cycles) {
-        if (n.apu.dmc_empty && n.apu.dmc_remaining > 0) {
-            n.apu.dmc_buffer = n.prg[n.apu.dmc_current - 32768]
-            n.apu.dmc_empty = false; n.stall += 4
-            n.apu.dmc_current = n.apu.dmc_current == 65535 ? 32768 : n.apu.dmc_current + 1
-            n.apu.dmc_remaining--
-            if (n.apu.dmc_remaining == 0) {
-                if ((n.apu.dmc_control & 64) != 0) { dmc_restart(n.apu) }
-                elif ((n.apu.dmc_control & 128) != 0) { n.apu.dmc_irq = true }
+    var remaining = cycles
+    while (remaining > 0) {
+        if (n.apu.quiet_cycles > 0) {
+            let step = min(remaining, n.apu.quiet_cycles)
+            apu_advance_quiet(n.apu, step)
+            remaining -= step
+        } else {
+            if (n.apu.dmc_empty && n.apu.dmc_remaining > 0) {
+                n.apu.dmc_buffer = n.prg[n.apu.dmc_current - 32768]
+                n.apu.dmc_empty = false; n.stall += 4
+                n.apu.dmc_current = n.apu.dmc_current == 65535 ? 32768 : n.apu.dmc_current + 1
+                n.apu.dmc_remaining--
+                if (n.apu.dmc_remaining == 0) {
+                    if ((n.apu.dmc_control & 64) != 0) { dmc_restart(n.apu) }
+                    elif ((n.apu.dmc_control & 128) != 0) { n.apu.dmc_irq = true }
+                }
             }
+            apu_cycle(n.apu)
+            remaining--
+            n.apu.quiet_cycles = apu_quiet_span(n.apu)
         }
-        apu_cycle(n.apu)
     }
 }

@@ -59,6 +59,7 @@ def main(smoke : bool) : int {
     write(n, 16407, 0); tick_apu(n, 4); tick_apu(n, 29830)
     verify(n.apu.frame_irq); verify((read(n, 16405) & 64) != 0 && !n.apu.frame_irq)
     n.apu.dmc_current = 65535; n.apu.dmc_remaining = 1; n.apu.dmc_empty = true; n.apu.dmc_control = 128
+    n.apu.quiet_cycles = 0 // This fixture edits registers directly, bypassing apu_write.
     n.prg[32767] = 165; tick_apu(n, 1)
     verify(n.apu.dmc_buffer == 165 && n.apu.dmc_current == 32768 && n.apu.dmc_irq && n.stall == 4)
     verify((read(n, 16405) & 128) != 0 && n.apu.dmc_irq)

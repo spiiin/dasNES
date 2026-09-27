@@ -24,6 +24,9 @@ struct Apu {
     mix_sum, pulse_sum : float
     mix_count : int
     filter_input, filter_high, filter_low : float
+    // Cached event-free clocks and DAC levels; register writes invalidate them.
+    quiet_cycles : int
+    pulse_cached, mix_cached : float
 }
 
 // NTSC machine. CPU registers are int, explicitly masked to bus width.
@@ -70,5 +73,4 @@ struct Nes {
     apu : Apu = Apu()
     cycles : int64
 }
-
 

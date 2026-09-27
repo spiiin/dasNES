@@ -20,6 +20,8 @@ if ($LASTEXITCODE -ne 0) { throw 'PPU scroll tests failed' }
 if ($LASTEXITCODE -ne 0) { throw 'Renderer reference tests failed' }
 & $Runner (Join-Path $PSScriptRoot 'hardware_tests.das') --smoke-test
 if ($LASTEXITCODE -ne 0) { throw 'APU/mapper tests failed' }
+& $Runner (Join-Path $PSScriptRoot 'apu_event_tests.das') --smoke-test
+if ($LASTEXITCODE -ne 0) { throw 'Event APU reference tests failed' }
 $previousRom = $env:DASNES_ROM
 try {
     $env:DASNES_ROM = Join-Path $PSScriptRoot 'demo.nes'
