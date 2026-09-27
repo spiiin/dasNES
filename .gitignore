@@ -1,0 +1,8 @@
+/work/
+/build/
+/ROM/
+/roms/
+*.sav
+*.nes
+!demo.nes
+__pycache__/
