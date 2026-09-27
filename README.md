@@ -1,179 +1,158 @@
 # dasNES
 
-Первая рабочая версия эмулятора NTSC NES на **daScript** с выводом через **dasSDL3**.
-Ядро целиком написано на daScript; Python используется только для генерации кода/демо и проверки эталонной трассы.
+Эмулятор **Nintendo Entertainment System (NES)** на **daScript** с настольной и браузерной версиями. CPU, PPU, звук и мапперы реализованы на daScript; [dasSDL3](https://github.com/spiiin/dasSDL3) обеспечивает изображение, аудио и ввод.
 
-## Запуск
+Обе версии используют общее ядро и AOT-компиляцию: в нативный код для Windows и в WebAssembly для браузера. В репозиторий входит собственный небольшой демонстрационный ROM — для первого запуска игры не нужны.
 
-Нужен собранный [dasSDL3](https://github.com/spiiin/dasSDL3). По умолчанию launcher ищет его рядом с dasNES:
-`../dasSDL3/build/ninja/bin/dasSDL3_runner.exe`.
+[Запуск](#запуск-на-windows) · [Веб-версия](#веб-версия) · [Управление](#управление) · [Совместимость](#совместимость) · [Разработка](#разработка)
 
-```powershell
-cd C:\src\dasNES
-.\build.ps1                       # собрать AOT один раз; MSVC x64 + CMake/Ninja
-.\run.ps1                         # встроенный оригинальный demo ROM
-.\run.ps1 -Rom C:\roms\game.nes    # свой NTSC ROM (mapper 0/1/2/4)
-.\run.ps1 -Rom C:\roms\game.nes -Runner C:\path\dasSDL3_runner.exe
+## Возможности
+
+- **CPU:** Ricoh 2A03/6502, все 151 официальная инструкция, прерывания NMI/IRQ, учёт тактов и OAM DMA.
+- **PPU:** изображение 256×240, фон, палитры, спрайты 8×8 и 8×16, приоритеты, sprite-zero hit и скроллинг.
+- **APU:** два импульсных канала, треугольный, шумовой и DMC; вывод монофонического звука 48 кГц.
+- **Картриджи:** iNES 1.0, мапперы 0 (NROM), 1 (MMC1), 2 (UxROM), 4 (MMC3), переключение PRG/CHR-банков, CHR RAM и зеркалирование nametable.
+- **Ввод:** контроллер с клавиатуры и NES Zapper с мышью.
+- **Темп игры:** частота NTSC около 60,1 кадра/с независимо от частоты обновления монитора; счётчик FPS показывает кадры эмуляции.
+- **Браузер:** загрузка локального ROM, звук, пауза, перезапуск и Zapper. Файл ROM остаётся в памяти браузера и не отправляется на сервер.
+
+Проект развивается. Проверены Windows x64 / MSVC и браузеры Edge и Firefox на Windows. Ограничения точности и совместимости перечислены ниже.
+
+## Запуск на Windows
+
+### Зависимости
+
+Нужны Git, CMake 3.24+, Ninja, инструменты C++ Visual Studio 2022 и Windows SDK. Сначала соберите **Release x64** версию dasSDL3 по его [инструкции](https://github.com/spiiin/dasSDL3#getting-started).
+
+По умолчанию репозитории должны находиться рядом:
+
+```text
+workspace/
+├── dasSDL3/             # собран в build/ninja
+└── dasNES/
 ```
 
-Управление: **Z** — A, **X** — B, **правый Shift** — Select, **Enter** — Start,
-стрелки — крестовина, **Esc** — выход. Окно 768×720, изображение NES 256×240.
-Звук: пять каналов APU, mono PCM 48 kHz через SDL AudioStream. `-Mute` отключает
-аудиоустройство, сохраняя эмуляцию APU. Для Duck Hunt launcher автоматически включает
-Zapper: мышь — прицел, левая кнопка — выстрел, правая — выстрел за пределы экрана.
-Для другого имени ROM можно указать `-Zapper`.
-Путь ROM передаётся через переменную окружения процесса `DASNES_ROM`; launcher восстанавливает её после запуска.
-
-`run.ps1` автоматически выбирает `build/aot/dasNES.exe`, если он собран.
-В этом режиме всё ядро и frontend выполняются как AOT C++ без interpreter fallback.
-После изменения `.das` запустите `build.ps1` снова: устаревшая сборка выдаст ошибку,
-а не незаметно перейдёт на медленное выполнение. `-Interpreter` принудительно включает
-старый интерпретатор; без AOT-сборки launcher использует его с предупреждением.
-
-Сборка использует существующую Release x64 `/MD` сборку соседнего dasSDL3 и ту же
-установку MSVC из её CMake cache. Библиотеки SDL/daScript повторно не собираются;
-binding registration с поддержкой AOT собирается внутри проекта, исходный dasSDL3 не меняется.
-Другой путь: `./build.ps1 -DasSDL3 C:\path\dasSDL3 -DependencyBuild C:\path\build`.
-
-## Реализовано
-
-- Загрузчик iNES 1.0: NROM (0), MMC1 (1), UxROM (2), MMC3 (4), PRG/CHR banking,
-  CHR RAM, trainer, горизонтальное/вертикальное/one-screen/four-screen зеркалирование.
-  MMC1 serial register, MMC3 IRQ, PRG RAM enable/write protection.
-  Некорректные и обрезанные файлы отклоняются.
-- APU: два pulse, triangle, noise, DMC, envelope/length/linear counters, sweep,
-  4/5-step frame sequencer, IRQ, DMC PRG reads и CPU stalls. Нелинейный микшер,
-  усреднение по CPU-тактам, фильтрация DC и высоких частот, вывод S16LE 48 kHz.
-- Все 151 официальная инструкция Ricoh 2A03/6502, флаги, стек, BRK/RTI, NMI/IRQ,
-  переходы через границы страниц, особенности JMP indirect, такты инструкций и OAM DMA.
-  Decimal flag сохраняется, но арифметика остаётся двоичной, как на NES.
-- CPU bus: RAM mirrors, SRAM, PPU registers, serial controller.
-- PPU: фон, attribute palettes, спрайты 8×8/8×16, отражения, приоритет,
-  ограничение восьми спрайтов, sprite-zero hit, палитра, grayscale, vblank/NMI,
-  буфер $2007, внутренние scroll-регистры v/t, переносы на dot 257 и 280–304,
-  циклический переход между nametable, отношение PPU/CPU 3:1.
-- dasSDL3: streaming RGBA texture, клавиатура, освобождение ресурсов через scopes,
-  ограниченный скрытый smoke test.
-
-## Ограничения
-
-Поддержка ориентирована на выбранные NTSC-версии восьми игр ниже.
-**Другие mapper'ы, PAL/NES 2.0, второй обычный контроллер,
-сохранение battery SRAM и неофициальные opcodes пока не реализованы.**
-Неизвестная инструкция останавливает эмулятор с PC и opcode.
-
-PPU рисует строку по снимку v и fine-X на dot 1; sprite-zero hit выставляется
-на dot соответствующего пересечения, а не в конце строки. Фоновые fetch/shifter
-pipeline и изменения картинки внутри строки пока приближённые. Race conditions NMI,
-аппаратная ошибка sprite overflow и color emphasis не воспроизводятся.
-MMC3 IRQ пока использует приближение A12 по фазам фоновых/спрайтовых fetch,
-а не полную модель PPU-шины. DMC DMA учитывает четыре такта задержки, без точного
-арбитража с OAM DMA и аппаратных конфликтов чтения контроллера. APU-записи происходят
-на границе инструкции; тактовые edge cases не заявляются полностью точными.
-Zapper проверяет яркость около прицела при рендере строки и время затухания датчика.
-CPU учитывает длительность инструкций, но не моделирует каждый bus cycle.
-Поэтому игры с точными растровыми эффектами могут работать неправильно.
-Интерпретатор может не успевать в real-time; для игры используйте AOT-сборку.
-Показ кадров синхронизирован с монитором через SDL VSync. NES/APU работают по отдельным
-часам ~60.0988 Гц: на быстрых мониторах кадр может повторяться, на медленных показывается
-последний полностью рассчитанный кадр. Аудио формируется для каждого шага эмуляции.
-Дополнительного ожидания после VSync нет; при отсутствии поддержки VSync используется
-таймер с сообщением в консоли. FPS в заголовке считает кадры NES, а не обновления монитора.
-
-## Проверки
+Клонирование dasNES из этой общей папки:
 
 ```powershell
-.\test.ps1              # CPU/bus/PPU/APU/mapper/controller + SDL audio/video smoke
-.\test.ps1 -Nestest     # дополнительно Python 3, интернет при первом запуске
-.\test.ps1 -Nestest -SmbRom '.\ROM\Super Mario Bros. (W) [!].nes'
-.\benchmark.ps1 -Rom '.\ROM\Super Mario Bros. (W) [!].nes'
-.\benchmark.ps1 -Rom '.\ROM\Super Mario Bros. (W) [!].nes' -Interpreter
+git clone https://github.com/spiiin/dasNES.git
+cd dasNES
 ```
 
-`-Nestest` загружает тестовый ROM и эталонную трассу в игнорируемую папку `work/`.
-Сравнивает первые **5003** состояния официальной части nestest: PC, A, X, Y, P, SP,
-число CPU cycles. Неофициальная часть теста не заявляется пройденной.
-Коммерческие ROM в репозиторий не включаются. `demo.nes` создан специально для проекта:
-рисует узор и меняет цвет через NMI. Генерация: `python tools/make_demo.py`.
+### Сборка и запуск
 
-Дополнительно проверен Super Mario Bros. (W): replay на 1800 кадров с обычным
-управлением проходит два перехода nametable. Он воспроизводит прежнее зависание
-в ожидании sprite-zero hit на $8150 после первой смены страницы. Полное прохождение
-и совместимость всех игровых эффектов не проверялись. Архивы из `ROM/` исключены из Git;
-для запуска требуется извлечённый `.nes`, чтение `.7z` в launcher не реализовано.
-
-Benchmark прогревает 60 кадров и измеряет 120 без ожидания и SDL-вывода: это скорость
-ядра, а не FPS окна. Выводит checksum framebuffer/RAM и состояние CPU для сравнения
-интерпретатора с AOT. `timing_tests.das` сравнивает 3746 сценариев PPU с потактовым
-эталонным планировщиком, включая границы событий, scroll transfers, DMA и нечётные кадры.
-`scroll_tests.das` проверяет wrap coarse/fine scroll, адресацию $2007 и split экрана
-со sprite-zero hit при разных значениях PPUCTRL и внутреннего адреса v.
-
-Оптимизации: декодер CPU делает 8 сравнений вместо линейной цепочки из 151 проверки;
-PPU перескакивает до следующего события; единственный framebuffer напрямую передаётся
-в upload_rgba8 без второго скриптового массива и побайтного копирования.
-
-## Основные ROM из локальных архивов
-
-Из каждого архива выбран один good dump NTSC; при наличии PRG0/PRG1 выбрана PRG1.
-Извлечённые файлы находятся в `ROM/selected/` (папка исключена из Git).
-
-| Архив | Выбранный ROM | Mapper |
-|---|---|---|
-| Contra | Contra (U) [!] | 2 — UxROM |
-| Darkwing Duck | Darkwing Duck (U) [!] | 1 — MMC1 |
-| Duck Hunt | Duck Hunt (W) [!] | 0 — NROM + Zapper |
-| Duck Tales | Duck Tales (U) [!] | 2 — UxROM |
-| Megaman IV | Megaman IV (U) (PRG1) [!] | 4 — MMC3 |
-| Super Mario Bros. 3 | Super Mario Bros. 3 (U) (PRG1) [!] | 4 — MMC3 |
-| Super Mario Bros. | Super Mario Bros. (W) [!] | 0 — NROM |
-| TMNT III | Teenage Mutant Ninja Turtles III - The Manhattan Project (U) [!] | 4 — MMC3 |
+В PowerShell из папки dasNES:
 
 ```powershell
-.\run.ps1 -Rom '.\ROM\selected\Super Mario Bros. 3 (U) (PRG1) [!].nes'
-.\run.ps1 -Rom '.\ROM\selected\Duck Hunt (W) [!].nes'
-python tools/test_rom_set.py                 # извлечение + replay всех восьми игр
-python tools/test_rom_set.py --extract-only  # только извлечение
-python tools/test_rom_set.py --only smb3     # повторить одну игру
+.\build.ps1
+.\run.ps1                         # встроенное демо
+.\run.ps1 -Rom '.\roms\game.nes'  # ваш распакованный ROM
 ```
 
-`test_rom_set.py` использует локальные `.7z` и системный `tar`, ничего не скачивает.
-По каждой игре выполняет 3600 кадров с обычным вводом, сохраняет кадры RGBA, пять секунд
-звука WAV и JSON с SHA-256 ROM/результатом в `work/compatibility/`. Проверяет выполнение
-без panic, изменение изображения и наличие звукового сигнала. Это smoke/replay-проверка,
-а не доказательство полного прохождения или точного воспроизведения всех эффектов.
-`hardware_tests.das` отдельно проверяет банки, CHR RAM, mirroring, IRQ, APU и Zapper bus.
+Папку `roms` можно создать самостоятельно или передать абсолютный путь к `.nes`. Пути с пробелами и квадратными скобками поддерживаются; заключайте их в кавычки.
 
-## Структура
+Дополнительные параметры:
 
-| Файл | Назначение |
-|---|---|
-| `state.das` | Состояние NES и APU |
-| `core.das` | Cartridge loader, CPU bus, PPU registers, контроллер/Zapper |
-| `mapper.das` | NROM, MMC1, UxROM, MMC3 |
-| `apu.das` | Пять звуковых каналов, sequencer, mixer, PCM |
-| `hardware_tests.das`, `rom_replay.das` | APU/mapper проверки и replay набора ROM |
-| `cpu.das` | Генерируемый декодер официальных инструкций |
-| `tools/generate_cpu.py` | Таблица opcodes и генератор декодера |
-| `ppu.das` | Рендер строк и тайминг PPU |
-| `main.das` | SDL frontend с VSync |
-| `pacing.das`, `pacing_tests.das` | Независимые часы NES и проверка разных частот монитора |
-| `tests.das`, `trace.das` | Проверки и экспорт трассы |
-| `timing_tests.das`, `benchmark.das` | Эквивалентность PPU и скорость ядра |
-| `scroll_tests.das`, `smb_scroll_test.das` | Регрессии прокрутки и необязательный replay SMB |
-| `native/`, `CMakeLists.txt`, `build.ps1` | Host и сборка AOT; логика эмуляции остаётся в daScript |
+```powershell
+.\run.ps1 -Rom '.\roms\game.nes' -Mute
+.\run.ps1 -Rom '.\roms\game.nes' -Zapper
+.\build.ps1 -DasSDL3 '..\dasSDL3' -DependencyBuild '..\dasSDL3\build\ninja'
+```
 
-Дальнейшая работа: точный fetch/shifter pipeline PPU и A12, bus-cycle CPU/APU/DMA,
-неофициальные opcodes, battery saves и дополнительные mapper’ы.
+Сборка использует готовые библиотеки dasSDL3 Release x64 (`/MD`) и создаёт `build/aot/dasNES.exe`. После изменения исходников `.das` повторите `build.ps1`.
 
-## Справочные материалы
+Для игры рекомендуется AOT-сборка. Параметр `-Interpreter` запускает интерпретатор, который может быть слишком медленным для реального времени. Если AOT ещё не собран, launcher использует доступный интерпретатор с предупреждением.
 
-- [APU](https://www.nesdev.org/wiki/APU), [MMC1](https://www.nesdev.org/wiki/MMC1), [MMC3](https://www.nesdev.org/wiki/MMC3)
-- [NESdev Wiki](https://www.nesdev.org/wiki/Nesdev_Wiki)
-- [PPU scrolling: v/t и правила переноса](https://www.nesdev.org/wiki/PPU_scrolling)
-- [Writing NES Emulator in Rust](https://bugzmanov.github.io/nes_ebook/chapter_1.html)
-- [Porting a NES emulator from Go to Nim](https://hookrace.net/blog/porting-nes-go-nim/)
-- [nestest и другие тестовые ROM](https://github.com/christopherpow/nes-test-roms)
+## Веб-версия
 
-Реализация написана для этого проекта; код других эмуляторов не копировался.
+Нужны **Emscripten 5.0.3**, CMake, Ninja, Python и заранее собранный Web-профиль dasSDL3. Подготовка зависимости описана в [dasSDL3 Web](https://github.com/spiiin/dasSDL3/blob/HEAD/web/README.md); необходимые функции обвязки перечислены в [документации веб-версии](web/README.md).
 
+Из папки dasNES, указав путь к своей установке Emscripten SDK:
+
+```powershell
+.\build-web.ps1 -EmSdk 'C:\path\to\emsdk'
+python -m http.server 8080 --bind 127.0.0.1 --directory build/web/site
+```
+
+Откройте [локальную страницу](http://127.0.0.1:8080/), выберите `.nes` и нажмите **Играть**. Без выбранного файла запускается демо. Архивы нужно распаковать заранее.
+
+На странице доступны пауза, перезапуск и выключение звука. При скрытии вкладки эмуляция приостанавливается. Браузер разрешает запуск звука после действия пользователя.
+
+Для размещения на статическом хостинге скопируйте всё содержимое `build/web/site`. Нужен HTTP(S)-сервер с MIME-типом `application/wasm`; открытие через `file://` не поддерживается. Подробнее о сборке, размещении и браузерных тестах — в [web/README.md](web/README.md).
+
+## Управление
+
+| Действие | Клавиша |
+| --- | --- |
+| Крестовина | Стрелки |
+| A | Z |
+| B | X |
+| Select | Правый Shift |
+| Start | Enter |
+| Выход / завершение сессии | Esc |
+
+Для Zapper: мышь — прицел, левая кнопка — выстрел, правая — выстрел за пределы экрана. Duck Hunt включает Zapper автоматически по имени файла. Для переименованного ROM используйте `-Zapper` на Windows или переключатель на веб-странице. В браузере щелчок по экрану игры возвращает фокус клавиатуры.
+
+## Совместимость
+
+Следующие версии ROM использовались для проверок:
+
+| Игра / версия ROM | Маппер |
+| --- | --- |
+| Super Mario Bros. (W) [!] | 0 — NROM |
+| Duck Hunt (W) [!] | 0 — NROM |
+| Darkwing Duck (U) [!] | 1 — MMC1 |
+| Contra (U) [!] | 2 — UxROM |
+| Duck Tales (U) [!] | 2 — UxROM |
+| Megaman IV (U) (PRG1) [!] | 4 — MMC3 |
+| Super Mario Bros. 3 (U) (PRG1) [!] | 4 — MMC3 |
+| Teenage Mutant Ninja Turtles III - The Manhattan Project (U) [!] | 4 — MMC3 |
+
+Настольные проверки включали воспроизведение ввода в течение 3600 кадров для каждого ROM; браузерные — запуск каждого ROM на 300 кадров в Edge и Firefox. Для Super Mario Bros. отдельно проверяется скроллинг через границы nametable. Это проверки запуска и отдельных сценариев, а не полное прохождение игр.
+
+Игровые ROM в репозиторий не входят. Включён только оригинальный [demo.nes](demo.nes).
+
+### Ограничения
+
+- Поддерживается NTSC; PAL, NES 2.0, другие мапперы и неофициальные инструкции CPU пока не реализованы.
+- Нет сохранения battery-backed SRAM на диск, сохранений состояния и второго обычного контроллера.
+- PPU рисует по строкам: изменения внутри строки и аппаратный конвейер выборки пикселей воспроизводятся приблизительно.
+- MMC3 IRQ, взаимодействие DMC/OAM DMA, пограничные случаи NMI и Zapper пока не полностью соответствуют аппаратуре.
+- Аппаратная ошибка sprite overflow и цветовое emphasis не воспроизводятся.
+
+## Разработка
+
+Основные проверки запускаются из PowerShell:
+
+```powershell
+.\test.ps1
+.\test.ps1 -Nestest
+.\test.ps1 -SmbRom '.\roms\Super Mario Bros. (W) [!].nes'
+.\benchmark.ps1 -Rom '.\roms\game.nes'
+```
+
+`test.ps1` проверяет CPU, PPU, скроллинг, APU, мапперы, темп эмуляции и запуск демо. `-Nestest` требует Python 3 и скачивает эталонные файлы при первом запуске; сравниваются первые 5003 состояния для официальных инструкций CPU. `-SmbRom` требует указанную версию ROM и проверяет сценарий скроллинга.
+
+Бенчмарк измеряет скорость ядра без ограничения частоты, поэтому его FPS отличается от счётчика в игре. Инструкции для Playwright находятся в [web/README.md](web/README.md).
+
+### Исходники
+
+| Файл / папка | Назначение |
+| --- | --- |
+| [state.das](state.das), [core.das](core.das) | Состояние NES, загрузка ROM и шина CPU |
+| [cpu.das](cpu.das) | Инструкции Ricoh 2A03/6502 |
+| [ppu.das](ppu.das) | Регистры, тайминги и изображение PPU |
+| [apu.das](apu.das) | Звуковые каналы и микшер |
+| [mapper.das](mapper.das) | NROM, MMC1, UxROM и MMC3 |
+| [pacing.das](pacing.das) | Синхронизация времени и кадров |
+| [main.das](main.das), [native/](native/) | Настольная версия и AOT-сборка |
+| [web_main.das](web_main.das), [web/](web/) | Браузерная версия, WebAssembly и веб-интерфейс |
+| [tools/](tools/) | Генераторы CPU и демо, тестовые инструменты |
+
+## Материалы
+
+- [NESdev Wiki](https://www.nesdev.org/wiki/Nesdev_Wiki) — описание аппаратуры NES.
+- [Writing NES Emulator in Rust](https://bugzmanov.github.io/nes_ebook/chapter_1.html) — последовательный разбор устройства эмулятора.
+- [Porting a NES emulator from Go to Nim](https://hookrace.net/blog/porting-nes-go-nim/) — пример реализации и переноса эмулятора.
+- [NES test ROMs](https://github.com/christopherpow/nes-test-roms) — тестовые программы и эталонные данные.
+- [dasSDL3](https://github.com/spiiin/dasSDL3) — привязки SDL3 к daScript.

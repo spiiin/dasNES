@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,"><title>dasNES · Web</title><link rel="stylesheet" href="style.css"></head>
+<body><main>
+<header><div><h1>dasNES <span>Web</span></h1><p>NES на daScript · изображение и звук через SDL3</p></div><output id="fps">— FPS</output></header>
+<section class="controls" aria-label="Запуск игры">
+<label class="file">Открыть ROM<input id="rom" type="file" accept=".nes"></label><span id="filename">Демо</span>
+<label><input id="zapper" type="checkbox"> Zapper</label>
+<button id="start" disabled>Играть</button><button id="pause" disabled>Пауза</button><button id="stop" disabled>Стоп</button><button id="restart" disabled>Заново</button><button id="sound" disabled>Звук</button>
+</section>
+<div class="screen"><canvas id="canvas" width="768" height="720" tabindex="0" aria-label="Экран NES"></canvas></div>
+<p id="status" role="status">Загрузка эмулятора…</p>
+<p class="help"><b>Enter</b> — Start · <b>Shift справа</b> — Select · <b>Z / X</b> — A / B · <b>Стрелки</b> — движение.<br>Zapper: мышь — прицел, левая кнопка — выстрел, правая — выстрел за экран.</p>
+<p class="help">Выберите локальный .nes (NTSC, mapper 0 / 1 / 2 / 4). ROM обрабатывается в браузере и не отправляется на сервер. Без ROM запускается встроенное демо. Сохранения между сессиями пока не поддерживаются.</p>
+<details><summary>Журнал</summary><pre id="output"></pre></details>
+</main><script src="dasnes_web.js"></script><script src="app.js"></script></body></html>
